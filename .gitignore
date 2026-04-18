@@ -1,0 +1,78 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+
+# uv
+.uv/
+uv.lock
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temp files
+/tmp/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Docker
+.docker/
+
+# Cookie files (NEVER commit these)
+data/cookies/
+!data/cookies/.gitkeep
+
+# Proxy data
+data/proxies/
+!data/proxies/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Secrets (paranoia mode)
+*.key
+*.pem
+*.cert
+secrets/
