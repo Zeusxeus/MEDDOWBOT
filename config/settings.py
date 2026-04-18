@@ -51,6 +51,7 @@ class RedisSettings(BaseModel):
     url: str = "redis://localhost:6379/0"
     fsm_prefix: str = "bot_fsm"
     cache_prefix: str = "bot_cache"
+    pool_size: int = 100
 
 
 class WorkerSettings(BaseModel):
