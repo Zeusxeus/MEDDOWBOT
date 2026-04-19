@@ -86,9 +86,16 @@ class FFmpegSettings(BaseModel):
 class ProxySettings(BaseModel):
     """Proxy pool settings."""
 
+    enabled: bool = True
     force_proxy_platforms: list[str] = Field(default_factory=lambda: ["youtube.com", "youtu.be"])
+    no_proxy_platforms: list[str] = Field(default_factory=list)
+    health_check_interval_seconds: int = 300
+    health_check_url: str = "http://www.google.com"
+    rotation_strategy: Literal[
+        "round_robin", "random", "least_used", "least_errors"
+    ] = "round_robin"
 
-    @field_validator("force_proxy_platforms", mode="before")
+    @field_validator("force_proxy_platforms", "no_proxy_platforms", mode="before")
     @classmethod
     def parse_platforms(cls, v: Any) -> list[str]:
         """Parse platforms from comma-separated string or list."""
@@ -100,7 +107,19 @@ class ProxySettings(BaseModel):
 class CookieSettings(BaseModel):
     """yt-dlp cookie settings."""
 
+    enabled: bool = True
     path: pathlib.Path = pathlib.Path("data/cookies")
+    cookie_platforms: list[str] = Field(
+        default_factory=lambda: ["youtube", "instagram", "twitter", "tiktok"]
+    )
+
+    @field_validator("cookie_platforms", mode="before")
+    @classmethod
+    def parse_platforms(cls, v: Any) -> list[str]:
+        """Parse platforms from comma-separated string or list."""
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
 
 class ObservabilitySettings(BaseModel):
