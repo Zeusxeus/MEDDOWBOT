@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
-import socket
-import time
-import uuid
 from datetime import UTC, datetime
+from pathlib import Path
+from uuid import UUID
 
 import structlog
 
@@ -16,23 +14,15 @@ from config.settings import settings
 from database import crud
 from database.models import JobStatus
 from database.session import get_db
-from observability import metrics
 from queues.broker import broker
 from utils.ffmpeg import compress_video, needs_compression
-from utils.quota import (
-    DiskSpaceError,
-    QuotaError,
-    check_disk_space,
-    check_and_increment_concurrent,
-    decrement_concurrent,
-)
 from utils.upload import upload_file
-from utils.ytdlp import YtDlpAuthError, YtDlpDownloadError, download_media
+from utils.ytdlp import download_media
 
 log = structlog.get_logger(__name__)
 
 
-@broker.task(task_name="download", max_retries=3, retry_delay=30, timeout=600)
+@broker.task(task_name="download", max_retries=3, timeout=600)
 async def download_task(
     url: str,
     user_id_str: str,
@@ -43,41 +33,38 @@ async def download_task(
     message_id: int,
 ) -> None:
     """
-    Main download pipeline worker.
+    Taskiq task that handles the full download/process/upload lifecycle.
     """
-    start_time = time.monotonic()
-    job_id = uuid.UUID(job_id_str)
-    user_uuid = uuid.UUID(user_id_str)
-    worker_id = f"{socket.gethostname()}-{os.getpid()}"
-    tmp_dir = settings.disk.temp_path / job_id_str
+    job_id = UUID(job_id_str)
+    log.info("download_task_started", job_id=job_id_str, url=url)
+
+    if bot is None:
+        log.error("bot_not_initialized")
+        return
+
+    # 1. Update job status to RUNNING
+    async with get_db() as session:
+        await crud.update_job_status(
+            session,
+            job_id,
+            JobStatus.RUNNING,
+            heartbeat_at=datetime.now(UTC),
+        )
+
+    # 2. Create temp directory for this job
+    tmp_dir = Path(f"data/downloads/{job_id_str}")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
     progress_task = None
-
-    log.info("download_task_started", job_id=job_id_str, user_id=user_id_str)
-
     try:
-        # 1. check_disk_space()
-        await check_disk_space()
+        # 3. Edit message: "⏬ Downloading..."
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text="⏬ <b>Downloading...</b> (0%)"
+        )
 
-        # 2. check_and_increment_concurrent(user_id_str)
-        # Note: The user prompt asked for user_id_str, which is the telegram_id string usually,
-        # but in our context it's the internal user UUID string. 
-        # utils/quota.py uses it as a redis key suffix.
-        await check_and_increment_concurrent(user_id_str)
-
-        # 3. Update job: status=RUNNING
-        async with get_db() as session:
-            await crud.update_job_status(
-                session,
-                job_id,
-                JobStatus.RUNNING,
-                claimed_by=worker_id,
-                heartbeat_at=datetime.now(UTC),
-            )
-
-        # 4. mkdir /tmp/bot/{job_id}/
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-
-        # 5. Create progress callback that publishes to Redis
+        # 4. Create progress callback that publishes to Redis
         def progress_callback(d: dict) -> None:
             if d.get("status") == "downloading":
                 p = d.get("_percent_str", "0%").replace("%", "")
@@ -93,12 +80,12 @@ async def download_task(
                 loop = asyncio.get_event_loop()
                 loop.create_task(publish_progress(job_id_str, percent, speed, eta))
 
-        # 6. Start start_progress_listener() as asyncio Task
+        # 5. Start start_progress_listener() as asyncio Task
         progress_task = asyncio.create_task(
             start_progress_listener(job_id_str, bot, chat_id, message_id)
         )
 
-        # 7. download_media()
+        # 6. download_media()
         download_result = await download_media(
             url=url,
             output_dir=tmp_dir,
@@ -107,14 +94,12 @@ async def download_task(
             progress_callback=progress_callback,
         )
 
-        # 8. Check if needs compression
-        # if local API disabled AND file > max_size_mb
-        # max_size_mb is in FFmpegSettings
+        # 7. Check if needs compression
         max_bytes = settings.ffmpeg.max_size_mb * 1024 * 1024
         file_to_upload = download_result.file_path
         
         if not settings.bot.use_local_api and needs_compression(file_to_upload, max_bytes):
-            # 9. If compression needed
+            # 8. If compression needed
             async with get_db() as session:
                 await crud.update_job_status(
                     session,
@@ -135,98 +120,67 @@ async def download_task(
             
             file_to_upload = await compress_video(file_to_upload, settings.ffmpeg.target_mb)
 
-        # 10. Edit message: "📤 Uploading..."
+        # 9. Edit message: "📤 Uploading..."
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
             text="📤 <b>Uploading to Telegram...</b>"
         )
 
-        # 11. upload_file()
+        # 10. upload_file()
         file_id = await upload_file(
             chat_id=chat_id,
             file_path=file_to_upload,
             caption=f"✅ <b>{download_result.filename}</b>"
         )
 
-        # 12. Update DB: status=DONE
+        # 11. Success
         async with get_db() as session:
             await crud.update_job_status(
                 session,
                 job_id,
                 JobStatus.DONE,
+                heartbeat_at=datetime.now(UTC),
                 telegram_file_id=file_id,
-                filename=download_result.filename,
                 size_bytes=file_to_upload.stat().st_size,
+                filename=download_result.filename,
             )
-
-            # 13. Update user: total_downloads++, total_bytes_served+=size
+            # Update user stats
             await crud.increment_user_stats(
                 session,
-                user_uuid,
-                file_to_upload.stat().st_size
+                UUID(user_id_str),
+                file_to_upload.stat().st_size,
             )
 
-        # 14. Delete the "Uploading..." message
-        try:
-            await bot.delete_message(chat_id, message_id)
-        except Exception:
-            pass
+        # 12. Cleanup
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
 
-        # 15. Record Prometheus metrics
-        metrics.jobs_completed_total.labels(platform=download_result.platform).inc()
-        metrics.bytes_served_total.inc(file_to_upload.stat().st_size)
-        metrics.job_duration_seconds.observe(time.monotonic() - start_time)
-
-    except DiskSpaceError as e:
-        log.error("download_disk_error", job_id=job_id_str, error=str(e))
-        await _fail_and_notify(job_id, chat_id, message_id, f"❌ Disk space error: {e}", "DiskSpaceError")
-        raise  # Re-raise for Taskiq retry
-    except YtDlpAuthError as e:
-        log.error("download_auth_error", job_id=job_id_str, error=str(e))
-        await _fail_and_notify(job_id, chat_id, message_id, "❌ Authentication error. Cookies might be expired.", "YtDlpAuthError")
-        return  # Don't retry
-    except YtDlpDownloadError as e:
-        log.error("download_failed", job_id=job_id_str, error=str(e))
-        # Get retry info
-        # Taskiq retry count is not directly in the task args, but we can notify about it
-        await _fail_and_notify(job_id, chat_id, message_id, f"❌ Download failed: {e}. Will retry if possible.", "YtDlpDownloadError")
-        metrics.jobs_failed_total.labels(reason="download_error").inc()
-        raise
-    except QuotaError as e:
-        log.warning("download_quota_error", job_id=job_id_str, error=str(e))
-        await _fail_and_notify(job_id, chat_id, message_id, f"❌ Quota error: {e}", "QuotaError")
-        return
     except Exception as e:
-        log.exception("download_unexpected_error", job_id=job_id_str)
-        await _fail_and_notify(job_id, chat_id, message_id, f"❌ Unexpected error: {e}", "UnexpectedError")
-        metrics.jobs_failed_total.labels(reason="unexpected_error").inc()
-        raise
+        log.exception("download_task_failed", job_id=job_id_str, error=str(e))
+        async with get_db() as session:
+            await crud.update_job_status(
+                session,
+                job_id,
+                JobStatus.FAILED,
+                error_message=str(e)[:500],
+            )
+        
+        if bot:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ <b>Download failed</b>\n\nURL: {url}\nError: <code>{str(e)[:200]}</code>"
+                )
+            except Exception:
+                log.error("failed_to_send_error_message", chat_id=chat_id)
+
     finally:
-        # ALWAYS
-        await decrement_concurrent(user_id_str)
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
         if progress_task and not progress_task.done():
             progress_task.cancel()
-
-
-async def _fail_and_notify(job_id: uuid.UUID, chat_id: int, message_id: int, text: str, error_type: str) -> None:
-    """Helper to update DB and notify user on failure."""
-    async with get_db() as session:
-        await crud.update_job_status(
-            session,
-            job_id,
-            JobStatus.FAILED,
-            error_message=text,
-            error_type=error_type
-        )
-    
-    try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text
-        )
-    except Exception:
-        await bot.send_message(chat_id, text)
+        
+        # Cleanup temp files
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+        except Exception:
+            log.warning("cleanup_failed", path=str(tmp_dir))

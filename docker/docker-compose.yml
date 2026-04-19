@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: meddowbot_postgres
     restart: always
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-meddowbot}
       POSTGRES_USER: ${POSTGRES_USER:-botuser}
@@ -19,6 +21,8 @@ services:
     image: redis:7-alpine
     container_name: meddowbot_redis
     restart: always
+    ports:
+      - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data

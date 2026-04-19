@@ -76,3 +76,7 @@ htmlcov/
 *.pem
 *.cert
 secrets/
+debug_settings.py
+.agents/
+.gemini/
+*.Identifier

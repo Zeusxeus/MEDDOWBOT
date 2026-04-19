@@ -59,7 +59,7 @@ async def process_count(message: types.Message, state: FSMContext) -> None:
 
 
 @router.message(StateFilter(RedditBulk.waiting_for_sort))
-async def process_sort(message: types.Message, state: FSMContext) -> types.Message | None:
+async def process_sort(message: types.Message, state: FSMContext) -> None:
     """Fetch posts and enqueue tasks."""
     data = await state.get_data()
     sub_name = data["subreddit"]
@@ -68,7 +68,8 @@ async def process_sort(message: types.Message, state: FSMContext) -> types.Messa
 
     if not settings.reddit.client_id or not settings.reddit.client_secret:
         await state.clear()
-        return await message.reply("❌ Reddit API not configured by admin.")
+        await message.reply("❌ Reddit API not configured by admin.")
+        return
 
     sent = await message.reply(f"🔍 Fetching {count} posts from r/{sub_name} ({sort})...")
 
@@ -87,7 +88,8 @@ async def process_sort(message: types.Message, state: FSMContext) -> types.Messa
                 posts.append(post.url)
 
         if not posts:
-            return await sent.edit_text("❌ No media posts found.")
+            await sent.edit_text("❌ No media posts found.")
+            return
 
         await sent.edit_text(f"🚀 Found {len(posts)} media posts. Queuing...")
 
@@ -96,7 +98,8 @@ async def process_sort(message: types.Message, state: FSMContext) -> types.Messa
                 session, message.from_user.id, message.from_user.username  # type: ignore
             )
             if not user.settings:
-                return await message.reply("❌ User settings not found.")
+                await message.reply("❌ User settings not found.")
+                return
 
             for url in posts:
                 job = await crud.create_download_job(
@@ -111,10 +114,10 @@ async def process_sort(message: types.Message, state: FSMContext) -> types.Messa
                     message_id=sent.message_id,
                 )
 
-        return await message.reply(f"✅ Enqueued {len(posts)} downloads.")
+        await message.reply(f"✅ Enqueued {len(posts)} downloads.")
     except Exception as e:
         log.exception("reddit_bulk_failed")
-        return await sent.edit_text(f"❌ Failed to fetch from Reddit: {e}")
+        await sent.edit_text(f"❌ Failed to fetch from Reddit: {e}")
     finally:
         await reddit.close()
         await state.clear()

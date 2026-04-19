@@ -23,9 +23,13 @@ async def upload_file(chat_id: int, file_path: Path, caption: str) -> str:
         The telegram_file_id of the uploaded document.
 
     Raises:
-        Exception: If the upload fails.
+        Exception: If the upload fails or bot is not initialized.
     """
     log.info("uploading_file", chat_id=chat_id, path=str(file_path))
+
+    if bot is None:
+        log.error("bot_not_initialized")
+        raise RuntimeError("Bot instance is not initialized")
 
     try:
         document = FSInputFile(path=file_path)
