@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pathlib
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +13,8 @@ class BotSettings(BaseModel):
     token: str
     admin_ids: list[int] = Field(default_factory=list)
     use_local_api: bool = False
+    webhook_url: Optional[str] = None
+    webhook_secret: Optional[str] = None
 
     @field_validator("admin_ids", mode="before")
     @classmethod
@@ -114,6 +116,7 @@ class CookieSettings(BaseModel):
 
     enabled: bool = True
     path: pathlib.Path = pathlib.Path("data/cookies")
+    validate_on_startup: bool = False
     cookie_platforms: list[str] = Field(
         default_factory=lambda: ["youtube", "instagram", "twitter", "tiktok"]
     )
@@ -125,6 +128,14 @@ class CookieSettings(BaseModel):
         if isinstance(v, str):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
+
+
+class RedditSettings(BaseModel):
+    """Reddit API settings."""
+
+    client_id: str | None = None
+    client_secret: str | None = None
+    user_agent: str = "MEDDOWBOT/1.0.0"
 
 
 class ObservabilitySettings(BaseModel):
@@ -162,6 +173,7 @@ class Settings(BaseSettings):
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
     cookies: CookieSettings = Field(default_factory=CookieSettings)
+    reddit: RedditSettings = Field(default_factory=RedditSettings)
     obs: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 

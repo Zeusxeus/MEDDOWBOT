@@ -1,0 +1,136 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: meddowbot_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meddowbot}
+      POSTGRES_USER: ${POSTGRES_USER:-botuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U botuser -d meddowbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: meddowbot_redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: meddowbot_api
+    restart: always
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - telegram_api_data:/var/lib/telegram-bot-api
+    expose:
+      - 8081
+
+  bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: meddowbot_bot
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENV: prod
+      BOT__TOKEN: ${BOT__TOKEN}
+      BOT__WEBHOOK_URL: ${BOT__WEBHOOK_URL}
+      BOT__WEBHOOK_SECRET: ${BOT__WEBHOOK_SECRET}
+      DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
+      REDIS__URL: redis://redis:6379/0
+      LOCAL_API__BASE_URL: http://telegram-bot-api:8081
+      BOT__USE_LOCAL_API: "true"
+    volumes:
+      - ./data/cookies:/app/data/cookies
+      - ./data/downloads:/app/data/downloads
+      - ./data/temp:/app/data/temp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    expose:
+      - 8080
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    deploy:
+      replicas: 3
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["taskiq", "worker", "queues.broker:broker", "workers.preflight", "workers.download"]
+    environment:
+      ENV: prod
+      BOT__TOKEN: ${BOT__TOKEN}
+      DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
+      REDIS__URL: redis://redis:6379/0
+      FFMPEG__THREADS: "2"
+    volumes:
+      - ./data/cookies:/app/data/cookies
+      - ./data/downloads:/app/data/downloads
+      - ./data/temp:/app/data/temp
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: meddowbot_prometheus
+    restart: always
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    expose:
+      - 9090
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: meddowbot_caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - bot
+
+volumes:
+  postgres_data:
+  redis_data:
+  telegram_api_data:
+  prometheus_data:
+  caddy_data:
+  caddy_config:

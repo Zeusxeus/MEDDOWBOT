@@ -1,0 +1,27 @@
+{
+    email {$CADDY_EMAIL:admin@example.com}
+}
+
+{$DOMAIN:localhost} {
+    # Only allow specific paths
+    handle /webhook {
+        reverse_proxy bot:8080
+    }
+
+    handle /health {
+        reverse_proxy bot:8080
+    }
+
+    handle /metrics {
+        reverse_proxy bot:8080
+    }
+
+    # Block everything else
+    handle {
+        abort
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
+}

@@ -143,6 +143,41 @@ class CookieManager:
         log.info("cookie_activated", platform=platform, filename=filename)
         return True, "Cookie file successfully validated and activated."
 
+    async def validate_all_active_cookies(self) -> dict[str, bool]:
+        """
+        Validate all active cookies in the database and update their status.
+        Returns a mapping of platform -> is_valid.
+        """
+        results = {}
+        async with get_db() as session:
+            for platform in settings.cookies.cookie_platforms:
+                cookie_record = await crud.get_active_cookie(session, platform)
+                if not cookie_record:
+                    continue
+
+                file_path = pathlib.Path(cookie_record.file_path)
+                if not file_path.exists():
+                    log.warning("cookie_file_missing", platform=platform, path=str(file_path))
+                    cookie_record.is_valid = False
+                    results[platform] = False
+                    continue
+
+                test_url = self._get_test_url(platform)
+                if not test_url:
+                    log.warning("no_test_url_for_platform", platform=platform)
+                    results[platform] = True  # Assume OK if we can't test
+                    continue
+
+                is_working, error_msg = await self._test_cookie_file(str(file_path), test_url)
+                cookie_record.is_valid = is_working
+                cookie_record.last_validated_at = datetime.datetime.now(datetime.timezone.utc)
+                if not is_working:
+                    log.error("cookie_validation_failed", platform=platform, error=error_msg)
+
+                results[platform] = is_working
+
+        return results
+
     def _validate_netscape_format(self, content: str) -> tuple[bool, str | None]:
         """
         Validate that the content follows the Netscape cookie file format.

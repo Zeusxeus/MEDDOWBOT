@@ -12,7 +12,7 @@ from database import crud
 from database.models import JobStatus
 from database.session import get_db
 from queues.broker import broker
-from utils.ytdlp import YtDlpAuthError, YtDlpExtractError, fetch_metadata, select_best_format
+from utils.ytdlp import YtDlpAuthError, YtDlpExtractError, build_format_selector, fetch_metadata, select_best_format
 from workers.download import download_task
 
 log = structlog.get_logger(__name__)
@@ -108,15 +108,6 @@ async def preflight_task(
 
     # 5. Large file warning
     # We need to select the best format to estimate size
-    best_format = select_best_format(
-        [{"format_id": f.format_id, "ext": f.ext, "height": int(f.resolution.split('x')[1]) if f.resolution and 'x' in f.resolution else None, "filesize": f.filesize, "vcodec": f.vcodec, "acodec": f.acodec} for f in preflight.formats],
-        format_quality
-    )
-    
-    # Actually select_best_format in utils/ytdlp.py expects a list of dicts.
-    # Let's use the actual preflight.formats which are FormatInfo dataclasses.
-    # I'll convert them to dicts for select_best_format.
-    
     formats_dicts = []
     for f in preflight.formats:
         f_dict = {
@@ -171,10 +162,13 @@ async def preflight_task(
     # 6. Normal flow: notify and chain
     await _notify_user(chat_id, message_id, f"⬇️ Downloading: <b>{preflight.title}</b>...")
     
+    format_selector = build_format_selector(format_quality)
+
     await download_task.kiq(
         url=url,
         user_id_str=user_id_str,
         job_id_str=job_id_str,
+        format_selector=format_selector,
         format_quality=format_quality,
         chat_id=chat_id,
         message_id=message_id,

@@ -27,12 +27,13 @@ return {1, ttl}
 """
 
 
-async def check_rate_limit(user_id: int) -> tuple[bool, int]:
+async def check_rate_limit(user_id: int, override_limit: int | None = None) -> tuple[bool, int]:
     """
     Check if a user has exceeded their rate limit.
 
     Args:
         user_id: The Telegram user ID.
+        override_limit: Optional limit override (requests per hour).
 
     Returns:
         A tuple of (allowed: bool, reset_in: int).
@@ -40,10 +41,13 @@ async def check_rate_limit(user_id: int) -> tuple[bool, int]:
     redis = get_redis()
     key = f"{settings.redis.cache_prefix}:ratelimit:{user_id}"
 
-    # We use 1 hour window as requested, with capacity derived from settings
-    # requests_per_minute * 60 for an hour.
+    # We use 1 hour window
     window = 3600
-    limit = settings.rate_limit.requests_per_minute * 60
+    
+    if override_limit is not None:
+        limit = override_limit
+    else:
+        limit = settings.rate_limit.requests_per_minute * 60
 
     try:
         # result format: [allowed, ttl]
@@ -54,7 +58,7 @@ async def check_rate_limit(user_id: int) -> tuple[bool, int]:
         reset_in = result[1]
 
         if not allowed:
-            log.warning("Rate limit exceeded", user_id=user_id, reset_in=reset_in)
+            log.warning("Rate limit exceeded", user_id=user_id, reset_in=reset_in, limit=limit)
 
         return allowed, reset_in
     except Exception as e:
