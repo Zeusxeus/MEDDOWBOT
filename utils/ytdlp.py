@@ -77,6 +77,7 @@ class DownloadResult:
     size_bytes: int
     duration: int | None
     thumbnail_url: str | None
+    platform: str
 
 
 class YtDlpLogger:
@@ -287,6 +288,7 @@ async def download_media(
             size_bytes=file_path.stat().st_size if file_path.exists() else 0,
             duration=info.get("duration"),
             thumbnail_url=info.get("thumbnail"),
+            platform=info.get("extractor", "generic"),
         )
 
     except DownloadError as e:

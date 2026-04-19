@@ -6,6 +6,7 @@ from typing import Optional, Sequence
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database.models import (
     CookieFile,
@@ -25,7 +26,7 @@ from database.models import (
 
 async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Optional[User]:
     """Fetch user by Telegram ID with settings loaded."""
-    stmt = select(User).where(User.telegram_id == telegram_id)
+    stmt = select(User).where(User.telegram_id == telegram_id).options(selectinload(User.settings))
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -50,6 +51,11 @@ async def upsert_user(
         # Create default settings
         settings = UserSettings(user_id=user.id)
         session.add(settings)
+        await session.flush()
+        # Re-fetch to ensure settings are loaded
+        user = await get_user_by_telegram_id(session, telegram_id)
+        if not user:
+            raise RuntimeError("Failed to create user")
     else:
         user.username = username
         user.first_name = first_name
@@ -190,3 +196,16 @@ async def log_rate_limit(session: AsyncSession, user_id: uuid.UUID) -> None:
     """Record a rate limit event."""
     log = RateLimitLog(user_id=user_id)
     session.add(log)
+
+
+async def increment_user_stats(session: AsyncSession, user_id: uuid.UUID, bytes_served: int) -> None:
+    """Increment denormalized user counters."""
+    stmt = (
+        update(User)
+        .where(User.id == user_id)
+        .values(
+            total_downloads=User.total_downloads + 1,
+            total_bytes_served=User.total_bytes_served + bytes_served,
+        )
+    )
+    await session.execute(stmt)

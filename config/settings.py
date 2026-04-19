@@ -66,6 +66,7 @@ class RateLimitSettings(BaseModel):
 
     requests_per_minute: int = 10
     burst: int = 3
+    max_concurrent_jobs: int = 2
 
 
 class DiskSettings(BaseModel):
@@ -74,6 +75,7 @@ class DiskSettings(BaseModel):
     downloads_path: pathlib.Path = pathlib.Path("data/downloads")
     temp_path: pathlib.Path = pathlib.Path("data/temp")
     max_disk_usage_gb: float = 10.0
+    min_free_gb: float = 2.0
 
 
 class FFmpegSettings(BaseModel):
@@ -81,6 +83,9 @@ class FFmpegSettings(BaseModel):
 
     binary_path: str = "ffmpeg"
     threads: int = 0
+    target_mb: int = 45
+    max_size_mb: int = 49
+    large_file_warn_mb: int = 200
 
 
 class ProxySettings(BaseModel):
