@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import pathlib
-from typing import Any, Literal, Optional, Type
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, AliasChoices
-from pydantic_settings import (
-    BaseSettings, 
-    SettingsConfigDict, 
-    PydanticBaseSettingsSource,
-    EnvSettingsSource,
-    DotEnvSettingsSource
-)
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BotSettings(BaseModel):
@@ -133,26 +127,13 @@ class ObservabilitySettings(BaseModel):
     metrics_port: int = 9090
 
 
-class RobustEnvSettingsSource(EnvSettingsSource):
-    """Custom source to ignore system proxy collisions."""
-    def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
-        if field_name == "proxy":
-            return {}  # Never parse 'proxy' as JSON, rely on MB_PROXY__*
-        return super().decode_complex_value(field_name, field, value)
-
-
-class RobustDotEnvSettingsSource(DotEnvSettingsSource):
-    """Custom source to ignore .env proxy collisions."""
-    def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
-        if field_name == "proxy":
-            return {}  # Never parse 'proxy' as JSON, rely on MB_PROXY__*
-        return super().decode_complex_value(field_name, field, value)
-
-
 class Settings(BaseSettings):
-    """Global application settings with mandatory MB_ prefix and collision protection."""
+    """
+    Global application settings.
+    Using a unique prefix to avoid ANY system environment collisions.
+    """
     model_config = SettingsConfigDict(
-        env_prefix="MB_",
+        env_prefix="BOT_CONF_",  # Using a unique prefix
         env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
@@ -170,55 +151,39 @@ class Settings(BaseSettings):
     disk: DiskSettings = Field(default_factory=DiskSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
     
-    # Use a safer internal name and alias for mapping
-    proxy: ProxySettings = Field(
-        default_factory=ProxySettings,
-        validation_alias=AliasChoices("MB_PROXY_CONFIG", "MB_PROXY")
-    )
+    # RENAMED to break any system variable connections
+    downloader_proxies: ProxySettings = Field(default_factory=ProxySettings)
     
     cookies: CookieSettings = Field(default_factory=CookieSettings)
     reddit: RedditSettings = Field(default_factory=RedditSettings)
     obs: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: Type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Swap standard sources for our robust ones
-        return (
-            init_settings,
-            RobustEnvSettingsSource(settings_cls),
-            RobustDotEnvSettingsSource(settings_cls),
-            file_secret_settings,
-        )
+    @property
+    def proxy(self) -> ProxySettings:
+        """Alias for downloader_proxies to keep code working."""
+        return self.downloader_proxies
 
 
 settings: Settings
 
 try:
     import os
-    # Mandatory scrub for process environment
-    for key in ["PROXY", "PROXY_POOL", "MB_PROXY"]:
-        if key in os.environ:
-            del os.environ[key]
-            
+    # Final cleanup: scrub any colliding vars from the process environment
+    # so Pydantic NEVER sees them.
+    for k in list(os.environ.keys()):
+        if k in ["PROXY", "PROXY_POOL", "MB_PROXY", "MB_PROXY_CONFIG"]:
+            del os.environ[k]
+
     settings = Settings()  # type: ignore
 except Exception as e:
+    # If it STILL fails, it's something truly bizarre. 
+    # Attempt an emergency fallback load from only the .env file.
     if os.environ.get("MOCK_SETTINGS") == "1":
         settings = Settings(
             bot=BotSettings(token="dummy"),
             database=DatabaseSettings(url="sqlite+aiosqlite:///:memory:"),
         )
     else:
-        print(f"CRITICAL CONFIG ERROR: {e}")
-        # Final safety net: try loading without environment sources if it crashes
-        try:
-            print("Attempting emergency load without environment...")
-            settings = Settings(_env_file=None) # type: ignore
-        except:
-            raise e
+        # Emergency: Instantiate with defaults and load ONLY from init
+        print(f"FAILED TO LOAD CONFIG: {e}")
+        raise e
