@@ -131,7 +131,6 @@ MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. All va
 |----------|---------|----------|-------------|
 | `MEDDOW_BOT_TOKEN` | — | **Yes** | Telegram Bot Token |
 | `MEDDOW_BOT_ADMIN_IDS` | `""` | **Yes** | Comma-separated list of Admin User IDs |
-| `MEDDOW_BOT_WEBHOOK_URL` | — | Prod only | Base URL for webhooks |
 
 ### Local Bot API
 | Variable | Default | Required | Description |
@@ -213,15 +212,6 @@ docker compose -f docker/docker-compose.yml exec bot uv run alembic upgrade head
 - **Webhook Secrets:** Required for production webhooks.
 - **Credential Masking:** Credentials are automatically masked in logs.
 - **Disk Protection:** Refuses jobs if disk space is low.
-
----
-
-## 🛠️ Development
-
-### Testing
-```bash
-uv run pytest tests/ -v
-```
 
 ---
 
