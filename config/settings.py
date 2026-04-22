@@ -9,7 +9,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class BotSettings(BaseModel):
     """Telegram bot settings."""
-
     token: str
     admin_ids: list[int] = Field(default_factory=list)
     webhook_url: Optional[str] = None
@@ -18,21 +17,15 @@ class BotSettings(BaseModel):
     @field_validator("admin_ids", mode="before")
     @classmethod
     def parse_admin_ids(cls, v: Any) -> list[int]:
-        """Parse admin IDs from comma-separated string or list."""
         if isinstance(v, str):
             if not v.strip() or v.startswith("your_"):
                 return []
             return [int(x.strip()) for x in v.split(",") if x.strip()]
-        if isinstance(v, (list, tuple)):
-            return [int(x) for x in v]
-        if isinstance(v, (int, float)):
-            return [int(v)]
         return v
 
 
 class LocalApiSettings(BaseModel):
     """Local Telegram Bot API settings."""
-
     enabled: bool = False
     url: str = "http://localhost:8081"
     api_id: str | None = None
@@ -42,7 +35,6 @@ class LocalApiSettings(BaseModel):
 
 class DatabaseSettings(BaseModel):
     """Database connection settings."""
-
     url: str
     echo: bool = False
     pool_size: int = 10
@@ -51,7 +43,6 @@ class DatabaseSettings(BaseModel):
 
 class RedisSettings(BaseModel):
     """Redis connection settings."""
-
     url: str = "redis://localhost:6379/0"
     fsm_prefix: str = "bot_fsm"
     cache_prefix: str = "bot_cache"
@@ -60,14 +51,12 @@ class RedisSettings(BaseModel):
 
 class WorkerSettings(BaseModel):
     """Taskiq worker settings."""
-
     concurrency: int = 3
     prefetch: int = 1
 
 
 class RateLimitSettings(BaseModel):
     """User rate limit settings."""
-
     requests_per_minute: int = 10
     burst: int = 3
     max_concurrent_jobs: int = 2
@@ -75,7 +64,6 @@ class RateLimitSettings(BaseModel):
 
 class DiskSettings(BaseModel):
     """Storage and disk usage settings."""
-
     downloads_path: pathlib.Path = pathlib.Path("data/downloads")
     temp_path: pathlib.Path = pathlib.Path("data/temp")
     max_disk_usage_gb: float = 10.0
@@ -84,7 +72,6 @@ class DiskSettings(BaseModel):
 
 class FFmpegSettings(BaseModel):
     """FFmpeg compression settings."""
-
     binary_path: str = "ffmpeg"
     threads: int = 0
     target_mb: int = 45
@@ -94,20 +81,16 @@ class FFmpegSettings(BaseModel):
 
 class ProxySettings(BaseModel):
     """Proxy pool settings."""
-
     enabled: bool = True
     force_proxy_platforms: list[str] = Field(default_factory=lambda: ["youtube.com", "youtu.be"])
     no_proxy_platforms: list[str] = Field(default_factory=list)
     health_check_interval_seconds: int = 300
     health_check_url: str = "https://www.google.com"
-    rotation_strategy: Literal[
-        "round_robin", "random", "least_used", "least_errors"
-    ] = "round_robin"
+    rotation_strategy: Literal["round_robin", "random", "least_used", "least_errors"] = "round_robin"
 
     @field_validator("force_proxy_platforms", "no_proxy_platforms", mode="before")
     @classmethod
     def parse_platforms(cls, v: Any) -> list[str]:
-        """Parse platforms from comma-separated string or list."""
         if isinstance(v, str):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
@@ -115,7 +98,6 @@ class ProxySettings(BaseModel):
 
 class CookieSettings(BaseModel):
     """yt-dlp cookie settings."""
-
     enabled: bool = True
     cookies_dir: pathlib.Path = pathlib.Path("data/cookies")
     validate_on_startup: bool = False
@@ -126,7 +108,6 @@ class CookieSettings(BaseModel):
     @field_validator("cookie_platforms", mode="before")
     @classmethod
     def parse_platforms(cls, v: Any) -> list[str]:
-        """Parse platforms from comma-separated string or list."""
         if isinstance(v, str):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
@@ -134,7 +115,6 @@ class CookieSettings(BaseModel):
 
 class RedditSettings(BaseModel):
     """Reddit API settings."""
-
     user_agent: str = "MEDDOWBOT/1.0.0"
     enabled: bool = False
     max_posts_per_request: int = 50
@@ -142,22 +122,15 @@ class RedditSettings(BaseModel):
 
 class ObservabilitySettings(BaseModel):
     """Logging and metrics settings."""
-
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "console"
     metrics_port: int = 9090
 
 
 class Settings(BaseSettings):
-    """
-    Global application settings.
-
-    This class aggregates all sub-settings and provides the main entry point
-    for configuration using Pydantic BaseSettings.
-    """
-
+    """Global application settings with mandatory prefix."""
     model_config = SettingsConfigDict(
-        env_prefix="",
+        env_prefix="MEDDOW_",  # Mandatory prefix for all environment variables
         env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
@@ -174,26 +147,28 @@ class Settings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     disk: DiskSettings = Field(default_factory=DiskSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
-    bot_proxy_pool: ProxySettings = Field(default_factory=ProxySettings)
+    proxy: ProxySettings = Field(default_factory=ProxySettings)
     cookies: CookieSettings = Field(default_factory=CookieSettings)
     reddit: RedditSettings = Field(default_factory=RedditSettings)
     obs: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
-# Global settings instance
 settings: Settings
 
 try:
     settings = Settings()  # type: ignore
-except Exception:
+except Exception as e:
     import os
-
-    # In environments where .env is missing or invalid (like during some CI/build steps),
-    # we allow a dummy instantiation if MOCK_SETTINGS is set.
     if os.environ.get("MOCK_SETTINGS") == "1":
         settings = Settings(
             bot=BotSettings(token="dummy"),
             database=DatabaseSettings(url="sqlite+aiosqlite:///:memory:"),
         )
     else:
+        print(f"CRITICAL: Failed to load settings. Error: {e}")
+        # Print environment variables that might be causing the collision
+        import sys
+        for k, v in os.environ.items():
+            if "PROXY" in k.upper():
+                print(f"Potential collision found in environment: {k}={v}")
         raise

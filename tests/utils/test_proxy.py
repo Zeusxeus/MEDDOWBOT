@@ -75,7 +75,7 @@ class TestProxyPool:
     @pytest.mark.asyncio
     async def test_pool_disabled_returns_none(self, monkeypatch):
         """If proxy is disabled in settings, return None."""
-        monkeypatch.setattr(settings.bot_proxy_pool, "enabled", False)
+        monkeypatch.setattr(settings.proxy, "enabled", False)
         
         result = await proxy_pool.get_proxy_for_url("https://youtube.com/watch?v=abc")
         assert result is None
@@ -83,8 +83,8 @@ class TestProxyPool:
     @pytest.mark.asyncio
     async def test_round_robin_picks_oldest(self, mock_db_session, monkeypatch):
         """Verify round_robin strategy picks the proxy with the oldest last_used_at."""
-        monkeypatch.setattr(settings.bot_proxy_pool, "enabled", True)
-        monkeypatch.setattr(settings.bot_proxy_pool, "rotation_strategy", "round_robin")
+        monkeypatch.setattr(settings.proxy, "enabled", True)
+        monkeypatch.setattr(settings.proxy, "rotation_strategy", "round_robin")
         
         db_session = mock_db_session
         now = datetime.now(timezone.utc)
@@ -122,8 +122,8 @@ class TestProxyPool:
     @pytest.mark.asyncio
     async def test_no_proxy_platforms(self, monkeypatch):
         """Verify proxies are skipped for excluded platforms."""
-        monkeypatch.setattr(settings.bot_proxy_pool, "enabled", True)
-        monkeypatch.setattr(settings.bot_proxy_pool, "no_proxy_platforms", ["google.com"])
+        monkeypatch.setattr(settings.proxy, "enabled", True)
+        monkeypatch.setattr(settings.proxy, "no_proxy_platforms", ["google.com"])
         
         result = await proxy_pool.get_proxy_for_url("https://google.com/search")
         assert result is None

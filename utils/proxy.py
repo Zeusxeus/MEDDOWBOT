@@ -51,18 +51,18 @@ class ProxyPool:
         Get a proxy for a specific URL based on settings and rotation strategy.
         Returns None if proxies are disabled or platform is excluded.
         """
-        if not settings.bot_proxy_pool.enabled:
+        if not settings.proxy.enabled:
             return None
 
         domain = urlparse(url).netloc.lower()
 
         # Check exclusion list
-        if any(platform in domain for platform in settings.bot_proxy_pool.no_proxy_platforms):
+        if any(platform in domain for platform in settings.proxy.no_proxy_platforms):
             log.debug("proxy_skipped_excluded_platform", domain=domain)
             return None
 
         # Check if proxy is forced for this platform
-        is_forced = any(platform in domain for platform in settings.bot_proxy_pool.force_proxy_platforms)
+        is_forced = any(platform in domain for platform in settings.proxy.force_proxy_platforms)
 
         proxy = await self._select_proxy()
 
@@ -90,7 +90,7 @@ class ProxyPool:
         async with get_db() as session:
             stmt = select(Proxy).where(Proxy.status == ProxyStatus.ACTIVE)
 
-            strategy = settings.bot_proxy_pool.rotation_strategy
+            strategy = settings.proxy.rotation_strategy
 
             if strategy == "round_robin":
                 stmt = stmt.order_by(Proxy.last_used_at.asc().nulls_first())
@@ -163,7 +163,7 @@ class ProxyPool:
             except Exception as e:
                 log.exception("proxy_health_check_loop_error", error=str(e))
 
-            await asyncio.sleep(settings.bot_proxy_pool.health_check_interval_seconds)
+            await asyncio.sleep(settings.proxy.health_check_interval_seconds)
 
     async def _run_health_checks(self) -> None:
         """Run health checks on all non-disabled proxies concurrently."""
@@ -194,7 +194,7 @@ class ProxyPool:
                     timeout=10.0,
                     follow_redirects=True,
                 ) as client:
-                    response = await client.get(settings.bot_proxy_pool.health_check_url)
+                    response = await client.get(settings.proxy.health_check_url)
                     response.raise_for_status()
 
                 latency = (time.perf_counter() - start_time) * 1000
