@@ -115,13 +115,13 @@ nano .env
 ```
 **Minimum required values:**
 ```bash
-MEDDOW_BOT__TOKEN=your_bot_token_from_botfather
-MEDDOW_BOT__ADMIN_IDS=your_telegram_user_id
+MB_BOT__TOKEN=your_bot_token_from_botfather
+MB_BOT__ADMIN_IDS=your_telegram_user_id
 ```
 
 ### Step 5: Start infrastructure
 ```bash
-docker compose up -d redis postgres
+docker compose -f docker/docker-compose.yml up -d redis postgres
 ```
 
 ### Step 6: Run database migrations
@@ -146,54 +146,54 @@ uv run taskiq worker task_queue.broker:broker workers.preflight workers.download
 
 ## ⚙️ Configuration
 
-MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. All variables **must** be prefixed with `MEDDOW_`.
+MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. All variables **must** be prefixed with `MB_`.
 
 ### Environment
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_ENV` | `dev` | No | `dev`, `prod`, or `test` |
+| `MB_ENV` | `dev` | No | `dev`, `prod`, or `test` |
 
 ### Bot Settings
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_BOT__TOKEN` | — | **Yes** | Telegram Bot Token |
-| `MEDDOW_BOT__ADMIN_IDS` | `[]` | **Yes** | Comma-separated list of Admin User IDs |
-| `MEDDOW_BOT__WEBHOOK_URL` | — | Prod only | Base URL for webhooks |
-| `MEDDOW_BOT__WEBHOOK_SECRET` | — | Prod only | Random secret for webhook security |
+| `MB_BOT__TOKEN` | — | **Yes** | Telegram Bot Token |
+| `MB_BOT__ADMIN_IDS` | `[]` | **Yes** | Comma-separated list of Admin User IDs |
+| `MB_BOT__WEBHOOK_URL` | — | Prod only | Base URL for webhooks |
+| `MB_BOT__WEBHOOK_SECRET` | — | Prod only | Random secret for webhook security |
 
 ### Local Bot API (removes 50MB upload limit)
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_LOCAL_API__ENABLED` | `false` | No | Enables 2GB uploads |
-| `MEDDOW_LOCAL_API__URL` | `http://localhost:8081` | No | Local API server URL |
-| `MEDDOW_LOCAL_API__API_ID` | — | If enabled | Telegram API ID |
-| `MEDDOW_LOCAL_API__API_HASH` | — | If enabled | Telegram API Hash |
+| `MB_LOCAL_API__ENABLED` | `false` | No | Enables 2GB uploads |
+| `MB_LOCAL_API__URL` | `http://localhost:8081` | No | Local API server URL |
+| `MB_LOCAL_API__API_ID` | — | If enabled | Telegram API ID |
+| `MB_LOCAL_API__API_HASH` | — | If enabled | Telegram API Hash |
 
 ### Database
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_DATABASE__URL` | — | **Yes** | Connection URL |
-| `MEDDOW_DATABASE__POOL_SIZE` | `10` | No | Connection pool size |
-| `MEDDOW_DATABASE__ECHO` | `false` | No | Log all SQL queries |
+| `MB_DATABASE__URL` | — | **Yes** | Connection URL |
+| `MB_DATABASE__POOL_SIZE` | `10` | No | Connection pool size |
+| `MB_DATABASE__ECHO` | `false` | No | Log all SQL queries |
 
 ### Workers
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_WORKER__CONCURRENCY` | `3` | No | Simultaneous tasks per worker |
+| `MB_WORKER__CONCURRENCY` | `3` | No | Simultaneous tasks per worker |
 
 ### Rate Limiting
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_RATE_LIMIT__REQUESTS_PER_MINUTE` | `10` | No | Max commands per minute |
-| `MEDDOW_RATE_LIMIT__BURST` | `3` | No | Token bucket burst allowance |
-| `MEDDOW_RATE_LIMIT__MAX_CONCURRENT_JOBS` | `2` | No | Simultaneous jobs per user |
+| `MB_RATE_LIMIT__REQUESTS_PER_MINUTE` | `10` | No | Max commands per minute |
+| `MB_RATE_LIMIT__BURST` | `3` | No | Token bucket burst allowance |
+| `MB_RATE_LIMIT__MAX_CONCURRENT_JOBS` | `2` | No | Simultaneous jobs per user |
 
 ### Proxy Pool
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEDDOW_PROXY__ENABLED` | `true` | No | Enable residential proxy pool |
-| `MEDDOW_PROXY__ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
-| `MEDDOW_PROXY__FORCE_PROXY_PLATFORMS` | `youtube.com,youtu.be` | No | Domains that MUST use proxies |
+| `MB_PROXY__ENABLED` | `true` | No | Enable residential proxy pool |
+| `MB_PROXY__ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
+| `MB_PROXY__FORCE_PROXY_PLATFORMS` | `youtube.com,youtu.be` | No | Domains that MUST use proxies |
 
 ---
 
@@ -256,11 +256,11 @@ nano .env
 ```
 
 **Crucial Production Settings:**
-- `MEDDOW_ENV=prod`
-- `MEDDOW_BOT__TOKEN=your_token`
-- `MEDDOW_BOT__ADMIN_IDS=your_id`
-- `MEDDOW_DATABASE__URL=postgresql+asyncpg://botuser:botpass@postgres:5432/meddowbot`
-- `MEDDOW_REDIS__URL=redis://redis:6379/0`
+- `MB_ENV=prod`
+- `MB_BOT__TOKEN=your_token`
+- `MB_BOT__ADMIN_IDS=your_id`
+- `MB_DATABASE__URL=postgresql+asyncpg://botuser:botpass@postgres:5432/meddowbot`
+- `MB_REDIS__URL=redis://redis:6379/0`
 
 ### 5. Deploy with Docker
 ```bash

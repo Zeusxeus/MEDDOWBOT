@@ -128,9 +128,9 @@ class ObservabilitySettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    """Global application settings with mandatory prefix."""
+    """Global application settings with mandatory MB_ prefix."""
     model_config = SettingsConfigDict(
-        env_prefix="MEDDOW_",  # Mandatory prefix for all environment variables
+        env_prefix="MB_",  # MANDATORY PREFIX
         env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
@@ -156,19 +156,19 @@ class Settings(BaseSettings):
 settings: Settings
 
 try:
+    import os
+    # Scrub potential collisions from environment before loading
+    for key in list(os.environ.keys()):
+        if key in ["PROXY", "PROXY_POOL", "BOT_PROXY_POOL"]:
+            del os.environ[key]
+            
     settings = Settings()  # type: ignore
 except Exception as e:
-    import os
     if os.environ.get("MOCK_SETTINGS") == "1":
         settings = Settings(
             bot=BotSettings(token="dummy"),
             database=DatabaseSettings(url="sqlite+aiosqlite:///:memory:"),
         )
     else:
-        print(f"CRITICAL: Failed to load settings. Error: {e}")
-        # Print environment variables that might be causing the collision
-        import sys
-        for k, v in os.environ.items():
-            if "PROXY" in k.upper():
-                print(f"Potential collision found in environment: {k}={v}")
+        print(f"CRITICAL CONFIG ERROR: {e}")
         raise
