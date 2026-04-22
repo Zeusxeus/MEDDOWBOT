@@ -19,13 +19,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Get existing columns to avoid duplicate column errors
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c['name'] for c in inspector.get_columns('user_settings')]
+
     # Use batch_alter_table for SQLite compatibility
     with op.batch_alter_table('user_settings', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('language', sa.String(length=10), server_default='en', nullable=False))
-        batch_op.add_column(sa.Column('max_file_size', sa.Integer(), server_default='50', nullable=False))
-        
-    # We leave the server defaults as is for SQLite to avoid complex table recreation just to drop defaults.
-    # On PostgreSQL these could be dropped easily, but batch mode handles the logic for us.
+        if 'language' not in columns:
+            batch_op.add_column(sa.Column('language', sa.String(length=10), server_default='en', nullable=False))
+        if 'max_file_size' not in columns:
+            batch_op.add_column(sa.Column('max_file_size', sa.Integer(), server_default='50', nullable=False))
 
 
 def downgrade() -> None:
