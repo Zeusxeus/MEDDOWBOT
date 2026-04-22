@@ -40,6 +40,11 @@ async def preflight_task(
     """
     job_id = uuid.UUID(job_id_str)
 
+    # Ensure required directories exist
+    settings.disk.downloads_path.mkdir(parents=True, exist_ok=True)
+    settings.disk.temp_path.mkdir(parents=True, exist_ok=True)
+    settings.cookies.cookies_dir.mkdir(parents=True, exist_ok=True)
+
     # 1. Content-aware cache check
     url_hash = hashlib.sha256(f"{url}{format_quality}".encode()).hexdigest()
 

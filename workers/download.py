@@ -42,6 +42,8 @@ async def download_task(
     bot = get_bot()
 
     # 0. Check disk space
+    settings.disk.downloads_path.mkdir(parents=True, exist_ok=True)
+    settings.disk.temp_path.mkdir(parents=True, exist_ok=True)
     total, used, free = shutil.disk_usage(settings.disk.downloads_path)
     free_gb = free / (2**30)
     if free_gb < settings.disk.min_free_gb:

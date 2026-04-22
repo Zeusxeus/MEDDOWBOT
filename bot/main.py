@@ -115,6 +115,12 @@ async def startup(app: web.Application) -> None:
     """Initialize all services and bot components."""
     global bot, bot_instance, dp
     setup_logging()
+    
+    # Create required directories
+    settings.disk.downloads_path.mkdir(parents=True, exist_ok=True)
+    settings.disk.temp_path.mkdir(parents=True, exist_ok=True)
+    settings.cookies.cookies_dir.mkdir(parents=True, exist_ok=True)
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await init_redis()
