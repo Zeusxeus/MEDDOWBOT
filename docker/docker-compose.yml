@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: meddowbot_postgres
     restart: always
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-meddowbot}
       POSTGRES_USER: ${POSTGRES_USER:-botuser}
@@ -19,6 +21,8 @@ services:
     image: redis:7-alpine
     container_name: meddowbot_redis
     restart: always
+    ports:
+      - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -53,14 +57,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      ENV: prod
-      BOT__TOKEN: ${BOT__TOKEN}
-      BOT__WEBHOOK_URL: ${BOT__WEBHOOK_URL}
-      BOT__WEBHOOK_SECRET: ${BOT__WEBHOOK_SECRET}
-      DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
-      REDIS__URL: redis://redis:6379/0
-      LOCAL_API__BASE_URL: http://telegram-bot-api:8081
-      BOT__USE_LOCAL_API: "true"
+      MB_ENV: prod
+      MB_BOT_TOKEN: ${BOT__TOKEN}
+      MB_BOT_WEBHOOK_URL: ${BOT__WEBHOOK_URL}
+      MB_BOT_WEBHOOK_SECRET: ${BOT__WEBHOOK_SECRET}
+      MB_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
+      MB_REDIS_URL: redis://redis:6379/0
+      MB_LOCAL_API_URL: http://telegram-bot-api:8081
+      MB_LOCAL_API_ENABLED: "true"
     volumes:
       - ./data/cookies:/app/data/cookies
       - ./data/downloads:/app/data/downloads
@@ -85,13 +89,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["taskiq", "worker", "queues.broker:broker", "workers.preflight", "workers.download"]
+    command: ["taskiq", "worker", "task_queue.broker:broker", "workers.preflight", "workers.download"]
     environment:
-      ENV: prod
-      BOT__TOKEN: ${BOT__TOKEN}
-      DATABASE__URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
-      REDIS__URL: redis://redis:6379/0
-      FFMPEG__THREADS: "2"
+      MB_ENV: prod
+      MB_BOT_TOKEN: ${BOT__TOKEN}
+      MB_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:-botpass}@postgres:5432/${POSTGRES_DB:-meddowbot}
+      MB_REDIS_URL: redis://redis:6379/0
+      MB_FFMPEG_HW_ACCEL: auto
     volumes:
       - ./data/cookies:/app/data/cookies
       - ./data/downloads:/app/data/downloads

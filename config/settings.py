@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     bot_webhook_secret: Optional[str] = None
 
     local_api_enabled: bool = False
-    local_api_url: str = "http://localhost:8081"
+    local_api_url: str = "http://127.0.0.1:8081"
     local_api_api_id: Optional[str] = None
     local_api_api_hash: Optional[str] = None
 
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     database_echo: bool = False
     database_pool_size: int = 10
 
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
     worker_concurrency: int = 3
 
     rate_limit_requests_per_minute: int = 10
