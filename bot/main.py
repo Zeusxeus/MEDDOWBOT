@@ -186,7 +186,7 @@ async def run_polling() -> None:
     app.router.add_get("/metrics", metrics_handler)
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", 8080).start()
+    await web.TCPSite(runner, "0.0.0.0", settings.obs.metrics_port).start()
     await startup(app)
     try:
         if dp and bot:
