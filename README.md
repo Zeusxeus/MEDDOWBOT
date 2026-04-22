@@ -33,14 +33,6 @@ MEDDOWBOT is a high-performance, asynchronous Telegram bot designed to download 
 - **Atomic Rate Limiting:** Lua-based token bucket rate limiting in Redis prevents bot abuse and race conditions.
 - **Security-First:** Built-in SSRF protection blocks download requests to private IP ranges and internal network addresses.
 
-### 🔧 Admin Dashboard
-- **Live Statistics:** Track total users, active jobs, top platforms, and system success rates.
-- **User Management:** Ban/unban users, view their download history, and set per-user rate limits.
-- **Queue Control:** Monitor live job queue depth and clear pending jobs if needed.
-- **Proxy & Cookie Management:** Add/Remove proxies and upload/validate cookie files via interactive menus.
-- **Global Broadcast:** Send messages or system announcements to all bot users.
-- **System Health:** Real-time monitoring of CPU, RAM, Disk usage, and database connection pools.
-
 ---
 
 ## 🏗️ Architecture
@@ -109,8 +101,8 @@ nano .env
 ```
 **Minimum required values:**
 ```bash
-BOT_CONF_BOT__TOKEN=your_bot_token_from_botfather
-BOT_CONF_BOT__ADMIN_IDS=your_telegram_user_id
+MEDDOW_BOT_TOKEN=your_bot_token_from_botfather
+MEDDOW_BOT_ADMIN_IDS=your_telegram_user_id
 ```
 
 ### Step 5: Start infrastructure
@@ -127,54 +119,42 @@ uv run alembic upgrade head
 
 ## ⚙️ Configuration
 
-MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. All variables **must** be prefixed with `BOT_CONF_`.
+MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. All variables **must** be prefixed with `MEDDOW_`.
 
 ### Environment
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_ENV` | `dev` | No | `dev`, `prod`, or `test` |
+| `MEDDOW_ENV` | `dev` | No | `dev`, `prod`, or `test` |
 
 ### Bot Settings
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_BOT__TOKEN` | — | **Yes** | Telegram Bot Token |
-| `BOT_CONF_BOT__ADMIN_IDS` | `[]` | **Yes** | Comma-separated list of Admin User IDs |
-| `BOT_CONF_BOT__WEBHOOK_URL` | — | Prod only | Base URL for webhooks |
-| `BOT_CONF_BOT__WEBHOOK_SECRET` | — | Prod only | Random secret for webhook security |
+| `MEDDOW_BOT_TOKEN` | — | **Yes** | Telegram Bot Token |
+| `MEDDOW_BOT_ADMIN_IDS` | `""` | **Yes** | Comma-separated list of Admin User IDs |
+| `MEDDOW_BOT_WEBHOOK_URL` | — | Prod only | Base URL for webhooks |
 
-### Local Bot API (removes 50MB upload limit)
+### Local Bot API
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_LOCAL_API__ENABLED` | `false` | No | Enables 2GB uploads |
-| `BOT_CONF_LOCAL_API__URL` | `http://localhost:8081` | No | Local API server URL |
-| `BOT_CONF_LOCAL_API__API_ID` | — | If enabled | Telegram API ID |
-| `BOT_CONF_LOCAL_API__API_HASH` | — | If enabled | Telegram API Hash |
+| `MEDDOW_LOCAL_API_ENABLED` | `false` | No | Enables 2GB uploads |
+| `MEDDOW_LOCAL_API_URL` | `http://localhost:8081` | No | Local API server URL |
 
 ### Database
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_DATABASE__URL` | — | **Yes** | Connection URL |
-| `BOT_CONF_DATABASE__POOL_SIZE` | `10` | No | Connection pool size |
-| `BOT_CONF_DATABASE__ECHO` | `false` | No | Log all SQL queries |
+| `MEDDOW_DATABASE_URL` | — | **Yes** | Connection URL |
+| `MEDDOW_DATABASE_POOL_SIZE` | `10` | No | Connection pool size |
 
 ### Workers
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_WORKER__CONCURRENCY` | `3` | No | Simultaneous tasks per worker |
-
-### Rate Limiting
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `BOT_CONF_RATE_LIMIT__REQUESTS_PER_MINUTE` | `10` | No | Max commands per minute |
-| `BOT_CONF_RATE_LIMIT__BURST` | `3` | No | Token bucket burst allowance |
-| `BOT_CONF_RATE_LIMIT__MAX_CONCURRENT_JOBS` | `2` | No | Simultaneous jobs per user |
+| `MEDDOW_WORKER_CONCURRENCY` | `3` | No | Simultaneous tasks per worker |
 
 ### Proxy Pool
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `BOT_CONF_DOWNLOADER_PROXIES__ENABLED` | `true` | No | Enable residential proxy pool |
-| `BOT_CONF_DOWNLOADER_PROXIES__ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
-| `BOT_CONF_DOWNLOADER_PROXIES__FORCE_PROXY_PLATFORMS` | `youtube.com,youtu.be` | No | Domains that MUST use proxies |
+| `MEDDOW_PROXY_ENABLED` | `true` | No | Enable residential proxy pool |
+| `MEDDOW_PROXY_ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
 
 ---
 
@@ -209,11 +189,11 @@ nano .env
 ```
 
 **Crucial Production Settings:**
-- `BOT_CONF_ENV=prod`
-- `BOT_CONF_BOT__TOKEN=your_token`
-- `BOT_CONF_BOT__ADMIN_IDS=your_id`
-- `BOT_CONF_DATABASE__URL=postgresql+asyncpg://botuser:botpass@postgres:5432/meddowbot`
-- `BOT_CONF_REDIS__URL=redis://redis:6379/0`
+- `MEDDOW_ENV=prod`
+- `MEDDOW_BOT_TOKEN=your_token`
+- `MEDDOW_BOT_ADMIN_IDS=your_id`
+- `MEDDOW_DATABASE_URL=postgresql+asyncpg://botuser:botpass@postgres:5432/meddowbot`
+- `MEDDOW_REDIS_URL=redis://redis:6379/0`
 
 ### 5. Deploy with Docker
 ```bash
@@ -233,6 +213,15 @@ docker compose -f docker/docker-compose.yml exec bot uv run alembic upgrade head
 - **Webhook Secrets:** Required for production webhooks.
 - **Credential Masking:** Credentials are automatically masked in logs.
 - **Disk Protection:** Refuses jobs if disk space is low.
+
+---
+
+## 🛠️ Development
+
+### Testing
+```bash
+uv run pytest tests/ -v
+```
 
 ---
 
