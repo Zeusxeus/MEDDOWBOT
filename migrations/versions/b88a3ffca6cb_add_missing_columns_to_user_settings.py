@@ -19,15 +19,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add columns with server defaults to handle existing rows
-    op.add_column('user_settings', sa.Column('language', sa.String(length=10), server_default='en', nullable=False))
-    op.add_column('user_settings', sa.Column('max_file_size', sa.Integer(), server_default='50', nullable=False))
-    
-    # Remove server defaults after population to keep them in Python code only (optional but cleaner)
-    op.alter_column('user_settings', 'language', server_default=None)
-    op.alter_column('user_settings', 'max_file_size', server_default=None)
+    # Use batch_alter_table for SQLite compatibility
+    with op.batch_alter_table('user_settings', schema=None) as batch_op:
+        batch_op.add_column(sa.Column('language', sa.String(length=10), server_default='en', nullable=False))
+        batch_op.add_column(sa.Column('max_file_size', sa.Integer(), server_default='50', nullable=False))
+        
+    # We leave the server defaults as is for SQLite to avoid complex table recreation just to drop defaults.
+    # On PostgreSQL these could be dropped easily, but batch mode handles the logic for us.
 
 
 def downgrade() -> None:
-    op.drop_column('user_settings', 'max_file_size')
-    op.drop_column('user_settings', 'language')
+    with op.batch_alter_table('user_settings', schema=None) as batch_op:
+        batch_op.drop_column('max_file_size')
+        batch_op.drop_column('language')
