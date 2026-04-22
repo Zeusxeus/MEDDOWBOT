@@ -5,6 +5,7 @@ from typing import Any, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
+from config.settings import settings
 from database import crud
 from database.session import get_db
 
@@ -33,6 +34,12 @@ class AuthMiddleware(BaseMiddleware):
                 username=user.username,
                 first_name=user.first_name,
             )
+
+            # Auto-promote admins based on config
+            if user.id in settings.bot.admin_ids and not db_user.is_admin:
+                db_user.is_admin = True
+                await session.commit()
+                await session.refresh(db_user)
 
             if db_user.is_banned:
                 return  # Silent drop for banned users
