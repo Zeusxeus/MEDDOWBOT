@@ -101,9 +101,9 @@ class CookieManager:
     ) -> None:
         """Notify admins about cookie expiry."""
         try:
-            from bot.main import bot_instance
+            from utils.bot import get_bot
+            bot = get_bot()
 
-            bot = bot_instance
             expiry_str = str(expires_at) if expires_at else "Unknown"
             msg = f"🍪 <b>Cookie Warning: {platform}</b>\nStatus: <code>{status}</code>\nExpires: <code>{expiry_str}</code>"
 

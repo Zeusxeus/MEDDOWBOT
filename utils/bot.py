@@ -22,11 +22,18 @@ def get_bot() -> Bot:
         return _worker_bot
 
     try:
+        import sys
+        import pathlib
+        # Ensure project root is in path for imports
+        root = str(pathlib.Path(__file__).parent.parent)
+        if root not in sys.path:
+            sys.path.append(root)
+            
         from bot.main import bot_instance
         if bot_instance is not None:
             _worker_bot = bot_instance
             return _worker_bot
-    except (ModuleNotFoundError, ImportError):
+    except (ModuleNotFoundError, ImportError, AttributeError):
         pass
 
     # No bot_instance found, create a new one (likely in a worker process)

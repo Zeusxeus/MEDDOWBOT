@@ -23,8 +23,8 @@ async def upload_file(chat_id: int, file_path: Path, caption: str) -> str:
     Raises:
         Exception: If the upload fails or bot is not initialized.
     """
-    from bot.main import bot_instance
-    bot = bot_instance
+    from utils.bot import get_bot
+    bot = get_bot()
 
     log.info("uploading_file", chat_id=chat_id, path=str(file_path))
 
