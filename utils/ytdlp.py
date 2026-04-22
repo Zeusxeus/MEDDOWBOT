@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,10 +29,6 @@ class YtDlpExtractError(YtDlpError):
 
 class YtDlpDownloadError(YtDlpError):
     """Raised when download fails."""
-
-
-class YtDlpFormatError(YtDlpError):
-    """Raised when no suitable format is found."""
 
 
 class YtDlpAuthError(YtDlpError):
@@ -80,147 +77,183 @@ class DownloadResult:
     platform: str
 
 
-class YtDlpLogger:
-    """Redirects yt-dlp logs to structlog."""
-
-    def debug(self, msg: str) -> None:
-        """Filter out common noisy messages if needed."""
-        if msg.startswith("[debug] "):
-            log.debug("ytdlp_debug", message=msg[8:])
-        else:
-            log.debug("ytdlp_info", message=msg)
-
-    def warning(self, msg: str) -> None:
-        """Log warnings."""
-        log.warning("ytdlp_warning", message=msg)
-
-    def error(self, msg: str) -> None:
-        """Log errors."""
-        log.error("ytdlp_error", message=msg)
-
-
-def build_format_selector(quality: str, max_size_mb: int | None = None) -> str:
+def get_format_selector(url: str, quality: str) -> str:
     """
-    Constructs the yt-dlp format string.
-
-    Example for '720': bestvideo[height<=720]+bestaudio/best[height<=720]
+    Determines the yt-dlp format selector based on platform and quality.
     """
     if quality == "audio":
-        selector = "bestaudio/best"
-    else:
-        try:
-            height = int(quality)
-            selector = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
-        except ValueError:
-            selector = "best"
+        return "bestaudio/best"
 
-    if max_size_mb:
-        # Note: This is a rough filter as yt-dlp's filesize estimation isn't always perfect
-        selector = f"({selector})[filesize<{max_size_mb}M]"
+    url_lower = url.lower()
+    if "youtube.com" in url_lower or "youtu.be" in url_lower:
+        return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
-    return selector
+    if any(
+        p in url_lower for p in ["tiktok.com", "instagram.com", "twitter.com", "x.com", "reddit.com"]
+    ):
+        return "best[ext=mp4]/best"
+
+    return "best[ext=mp4]/best"
 
 
-def select_best_format(formats: list[dict[str, Any]], quality: str) -> FormatInfo | None:
-    """Logic to pick the best format given a quality preference."""
-    if not formats:
+def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | None:
+    """
+    From available formats, pick the best one under FFMPEG__MAX_SIZE_MB.
+    """
+    from config.settings import settings
+
+    max_bytes = settings.ffmpeg.max_size_mb * 1024 * 1024
+    quality_order = ["1080", "720", "480", "360"]
+
+    if quality == "audio":
+        audio_formats = [f for f in formats if f.vcodec == "none" or f.vcodec is None]
+        if not audio_formats:
+            return None
+        return sorted(audio_formats, key=lambda f: f.filesize or 0, reverse=True)[0]
+
+    if quality == "best":
+        video_formats = [f for f in formats if f.vcodec != "none"]
+        if not video_formats:
+            return None
+        return sorted(video_formats, key=lambda f: f.filesize or 0, reverse=True)[0]
+
+    if quality not in quality_order:
         return None
 
-    video_formats = [f for f in formats if f.get("vcodec") != "none"]
+    try:
+        start_idx = quality_order.index(quality)
+    except ValueError:
+        start_idx = 1
 
-    if quality == "audio":
-        audio_formats = [f for f in formats if f.get("vcodec") == "none"]
-        if not audio_formats:
-            # Fallback to any format if no audio-only found
-            audio_formats = formats
+    for q in quality_order[start_idx:]:
+        height = int(q)
+        candidates = []
+        for f in formats:
+            if f.vcodec == "none":
+                continue
+            
+            f_height = 0
+            if f.resolution and "x" in f.resolution:
+                try:
+                    f_height = int(f.resolution.split("x")[1])
+                except (ValueError, IndexError):
+                    continue
+            
+            if f_height <= height and (f.filesize is None or f.filesize <= max_bytes):
+                candidates.append(f)
 
-        # Sort by abr (average bitrate)
-        audio_formats.sort(key=lambda x: x.get("abr") or 0, reverse=True)
-        best = audio_formats[0]
-    else:
-        try:
-            target_height = int(quality)
-        except ValueError:
-            target_height = 1080
+        if candidates:
+            return sorted(
+                candidates,
+                key=lambda f: (
+                    int(f.resolution.split("x")[1]) if f.resolution and "x" in f.resolution else 0,
+                    f.filesize or 0,
+                ),
+                reverse=True,
+            )[0]
 
-        # Filter and sort
-        eligible = []
-        for f in video_formats:
-            height = f.get("height")
-            if height is not None and isinstance(height, (int, float)) and height <= target_height:
-                eligible.append(f)
+    return None
 
-        if not eligible:
-            # Auto-downgrade: pick the best available if all are above target
-            video_formats.sort(key=lambda x: x.get("height") or 0, reverse=True)
-            best = video_formats[-1] if video_formats else formats[0]
-        else:
-            eligible.sort(key=lambda x: (x.get("height") or 0, x.get("tbr") or 0), reverse=True)
-            best = eligible[0]
 
-    return FormatInfo(
-        format_id=best["format_id"],
-        ext=best["ext"],
-        resolution=f"{best.get('width')}x{best.get('height')}"
-        if best.get("width") and best.get("height")
-        else None,
-        filesize=best.get("filesize") or best.get("filesize_approx"),
-        vcodec=best.get("vcodec"),
-        acodec=best.get("acodec"),
-    )
+def build_ydl_opts(
+    url: str,
+    format_selector: str,
+    proxy_url: str | None,
+    cookie_file: str | None,
+    job_id: uuid.UUID | str,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """
+    Builds the options dictionary for YoutubeDL.
+    """
+
+    def hook_fn(d: dict[str, Any]) -> None:
+        if progress_callback:
+            try:
+                progress_callback(d)
+            except Exception as e:
+                log.error("progress_callback_error", error=str(e), job_id=str(job_id))
+
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": False,
+        "extract_flat": False,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "http_chunk_size": 10485760,  # 10MB
+        "proxy": proxy_url,
+        "cookiefile": cookie_file,
+        "user_agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "check_formats": False,
+    }
+
+    if progress_callback:
+        opts["progress_hooks"] = [hook_fn]
+
+    return opts
 
 
 async def fetch_metadata(url: str, user_format_quality: str) -> PreflightResult:
     """
-    Extracts metadata for a given URL.
-
-    Uses proxy and cookies if available.
+    Extracts metadata for a given URL using yt-dlp.
     """
     proxy = await proxy_pool.get_proxy_for_url(url)
+    proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
 
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "logger": YtDlpLogger(),
-        "skip_download": True,
-        "extract_flat": "in_playlist",
-        "cookiefile": cookie_file,
-        "proxy": proxy.ytdlp_url if proxy else None,
-    }
+    format_selector = get_format_selector(url, user_format_quality)
+    opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, "metadata")
+    opts["skip_download"] = True
 
     def _extract() -> dict[str, Any]:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=False)  # type: ignore
 
+    start_time = time.perf_counter()
     try:
-        # Wrap in to_thread with a timeout (e.g. 30 seconds)
-        info = await asyncio.wait_for(asyncio.to_thread(_extract), timeout=30.0)
-    except asyncio.TimeoutError:
-        raise YtDlpExtractError("Metadata extraction timed out")
+        info = await asyncio.to_thread(_extract)
+        if proxy:
+            latency = (time.perf_counter() - start_time) * 1000
+            await proxy_pool.record_proxy_success(proxy.id, latency)
     except DownloadError as e:
-        msg = str(e).lower()
-        if any(term in msg for term in ("login", "sign in", "confirm your age")):
-            raise YtDlpAuthError(f"Authentication required: {e}")
-        raise YtDlpExtractError(f"Failed to extract metadata: {e}")
+        if proxy:
+            await proxy_pool.record_proxy_failure(proxy.id)
+        msg = str(e)
+        msg_lower = msg.lower()
+        log.warning("ytdlp_extract_error", url=url, error=msg)
+        
+        if any(kw in msg_lower for kw in ["sign in", "login", "confirm your age", "account is private"]):
+            raise YtDlpAuthError(f"Authentication required or content private: {msg}") from e
+            
+        if "10204" in msg or "video not available" in msg_lower:
+            raise YtDlpExtractError(f"Video is unavailable: {msg}") from e
+
+        raise YtDlpExtractError(msg) from e
     except Exception as e:
-        raise YtDlpExtractError(f"Unexpected error during extraction: {e}")
+        if proxy:
+            await proxy_pool.record_proxy_failure(proxy.id)
+        log.exception("metadata_extraction_failed", url=url, error=str(e))
+        raise YtDlpExtractError(str(e)) from e
 
     formats_data: list[dict[str, Any]] = info.get("formats", [])
-    formats = []
-    for f in formats_data:
-        formats.append(
-            FormatInfo(
-                format_id=f["format_id"],
-                ext=f["ext"],
-                resolution=f"{f.get('width')}x{f.get('height')}"
-                if f.get("width") and f.get("height")
-                else None,
-                filesize=f.get("filesize") or f.get("filesize_approx"),
-                vcodec=f.get("vcodec"),
-                acodec=f.get("acodec"),
-            )
+    formats = [
+        FormatInfo(
+            format_id=f.get("format_id", "unknown"),
+            ext=f.get("ext", "unknown"),
+            resolution=f"{f.get('width')}x{f.get('height')}"
+            if f.get("width") and f.get("height")
+            else None,
+            filesize=f.get("filesize") or f.get("filesize_approx"),
+            vcodec=f.get("vcodec"),
+            acodec=f.get("acodec"),
         )
+        for f in formats_data
+    ]
 
     return PreflightResult(
         url=url,
@@ -238,70 +271,81 @@ async def download_media(
     output_dir: Path,
     format_selector: str,
     job_id: uuid.UUID,
-    progress_callback: Callable[[dict[str, Any]], Any],
+    progress_callback: Callable[[dict[str, Any]], None],
 ) -> DownloadResult:
-    """Downloads media from a URL using yt-dlp."""
+    """
+    Downloads media from a URL using yt-dlp.
+    """
     proxy = await proxy_pool.get_proxy_for_url(url)
+    proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
-    def progress_hook(d: dict[str, Any]) -> None:
-        """Call the async progress_callback from the thread-safe way."""
+    def wrapped_callback(d: dict[str, Any]) -> None:
         loop.call_soon_threadsafe(progress_callback, d)
 
-    opts = {
-        "format": format_selector,
-        "outtmpl": str(output_dir / f"{job_id}.%(ext)s"),
-        "logger": YtDlpLogger(),
-        "noprogress": True,
-        "cookiefile": cookie_file,
-        "proxy": proxy.ytdlp_url if proxy else None,
-        "progress_hooks": [progress_hook],
-    }
+    opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, job_id, wrapped_callback)
+    opts.update(
+        {
+            "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
+            "format": format_selector,
+            "merge_output_format": "mp4",
+            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
+        }
+    )
 
-    start_time = loop.time()
-    success = False
+    def _download() -> dict[str, Any]:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=True)  # type: ignore
 
+    start_time = time.perf_counter()
     try:
-
-        def _download() -> dict[str, Any]:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=True)  # type: ignore
-
         info = await asyncio.to_thread(_download)
-        success = True
-
-        # Construct result
-        ext = info.get("ext", "mp4")
-        file_path = output_dir / f"{job_id}.{ext}"
-
-        # Sometimes yt-dlp merges files and the extension changes or it might be different
-        # Better to check what was actually downloaded
-        actual_files = list(output_dir.glob(f"{job_id}.*"))
-        if actual_files:
-            file_path = actual_files[0]
-
-        return DownloadResult(
-            file_path=file_path,
-            filename=info.get("title", str(job_id)),
-            size_bytes=file_path.stat().st_size if file_path.exists() else 0,
-            duration=info.get("duration"),
-            thumbnail_url=info.get("thumbnail"),
-            platform=info.get("extractor", "generic"),
-        )
-
-    except DownloadError as e:
-        msg = str(e).lower()
-        if any(term in msg for term in ("login", "sign in", "confirm your age")):
-            raise YtDlpAuthError(f"Authentication required: {e}")
-        raise YtDlpDownloadError(f"Download failed: {e}")
-    except Exception as e:
-        raise YtDlpDownloadError(f"Unexpected error during download: {e}")
-    finally:
         if proxy:
-            latency = (loop.time() - start_time) * 1000
-            if success:
-                await proxy_pool.record_proxy_success(proxy.id, latency)
+            latency = (time.perf_counter() - start_time) * 1000
+            await proxy_pool.record_proxy_success(proxy.id, latency)
+    except DownloadError as e:
+        if proxy:
+            await proxy_pool.record_proxy_failure(proxy.id)
+        msg = str(e)
+        msg_lower = msg.lower()
+        log.warning("ytdlp_download_error", url=url, job_id=str(job_id), error=msg)
+        
+        if any(kw in msg_lower for kw in ["sign in", "login", "confirm your age"]):
+            raise YtDlpAuthError(msg) from e
+        raise YtDlpDownloadError(msg) from e
+    except Exception as e:
+        if proxy:
+            await proxy_pool.record_proxy_failure(proxy.id)
+        log.exception("download_failed", url=url, job_id=str(job_id), error=str(e))
+        raise YtDlpDownloadError(str(e)) from e
+
+    filename = info.get("_filename")
+    if not filename:
+        files = list(output_dir.glob("*"))
+        if not files:
+            raise YtDlpDownloadError("Downloaded file not found on disk")
+        file_path = files[0]
+    else:
+        file_path = Path(filename)
+
+    if not file_path.exists():
+        mp4_path = file_path.with_suffix(".mp4")
+        if mp4_path.exists():
+            file_path = mp4_path
+        else:
+            files = list(output_dir.glob("*"))
+            if files:
+                file_path = files[0]
             else:
-                await proxy_pool.record_proxy_failure(proxy.id)
+                raise YtDlpDownloadError(f"File not found: {file_path}")
+
+    return DownloadResult(
+        file_path=file_path,
+        filename=file_path.name,
+        size_bytes=file_path.stat().st_size,
+        duration=info.get("duration"),
+        thumbnail_url=info.get("thumbnail"),
+        platform=info.get("extractor", "generic"),
+    )

@@ -28,7 +28,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Create necessary directories and set permissions
 RUN mkdir -p /tmp/bot /app/data/cookies /app/data/downloads /app/data/temp \
-    && chown -R botuser:botgroup /tmp/bot /app
+    && chown -R botuser:botgroup /tmp/bot /app&& chown -R botuser:botgroup /tmp/bot /app chown -R botuser:botgroup /tmp/bot /app \\
+    && chmod 700 /app/data/cookies
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./

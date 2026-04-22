@@ -56,6 +56,8 @@ async def mock_db_session(db_session, monkeypatch):
     monkeypatch.setattr("middleware.rate_limit.get_db", lambda: AsyncContextManagerMock(db_session))
     monkeypatch.setattr("utils.proxy.get_db", lambda: AsyncContextManagerMock(db_session))
     monkeypatch.setattr("utils.cookies.get_db", lambda: AsyncContextManagerMock(db_session))
+    monkeypatch.setattr("workers.preflight.get_db", lambda: AsyncContextManagerMock(db_session))
+    monkeypatch.setattr("workers.download.get_db", lambda: AsyncContextManagerMock(db_session))
     return db_session
 
 
@@ -70,4 +72,5 @@ def redis_client():
 def mock_get_redis(redis_client, monkeypatch):
     """Monkeypatch get_redis to return the fake client."""
     monkeypatch.setattr("cache.client.get_redis", lambda: redis_client)
+    monkeypatch.setattr("workers.preflight.get_redis", lambda: redis_client)
     return redis_client

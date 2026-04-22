@@ -7,11 +7,15 @@ import uuid
 from urllib.parse import urlparse
 
 import structlog
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from config.settings import settings
 from database import crud
 from database.models import CookieFile
 from database.session import get_db
+from utils.notify import notify_admins
 
 log = structlog.get_logger(__name__)
 
@@ -26,50 +30,91 @@ class CookieManager:
     def _ensure_dirs(self) -> None:
         """Create necessary cookie directories."""
         for platform in settings.cookies.cookie_platforms:
-            path = settings.cookies.path / platform
+            path = settings.cookies.cookies_dir / platform
             path.mkdir(parents=True, exist_ok=True)
 
-    async def get_cookie_file(self, platform_or_url: str) -> str | None:
+    async def get_cookie_file(self, url: str) -> str | None:
         """
-        Get the path to the active cookie file for a given platform or URL.
+        Get the absolute path to the active cookie file for a given URL.
 
-        Returns None if cookies are disabled, platform is not supported,
-        or no active cookie file is found in the database.
+        Steps:
+        1. Extract domain and map to platform key.
+        2. Check if cookies are enabled and platform is supported.
+        3. Lookup active CookieFile in DB.
+        4. Construct absolute path and verify file exists.
+        5. Warn if expired but still return path.
         """
         if not settings.cookies.enabled:
             return None
 
-        domain = self._normalize_domain(platform_or_url)
+        domain = self._normalize_domain(url)
         platform = self._platform_key(domain)
 
         if platform not in settings.cookies.cookie_platforms:
+            log.debug("platform_not_in_cookie_platforms", platform=platform, url=url)
             return None
 
         async with get_db() as session:
             cookie_record = await crud.get_active_cookie(session, platform)
 
         if not cookie_record:
+            log.debug("no_active_cookie_found", platform=platform)
             return None
 
-        file_path = pathlib.Path(cookie_record.file_path)
+        # Construct absolute path: settings.cookies.cookies_dir / platform / filename
+        file_path = (
+            pathlib.Path(settings.cookies.cookies_dir).absolute() / platform / cookie_record.filename
+        )
+
         if not file_path.exists():
-            log.warning("active_cookie_file_not_found", platform=platform, path=str(file_path))
+            log.warning("active_cookie_file_not_found_on_disk", platform=platform, path=str(file_path))
             return None
 
-        # Warning if expiring soon (< 7 days)
+        # Check if expired
         if cookie_record.expires_at:
-            time_until_expiry = cookie_record.expires_at - datetime.datetime.now(
-                datetime.timezone.utc
-            )
-            if time_until_expiry < datetime.timedelta(days=7):
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if cookie_record.expires_at < now:
+                log.warning(
+                    "cookie_file_expired",
+                    platform=platform,
+                    expires_at=cookie_record.expires_at,
+                    path=str(file_path),
+                )
+                await self._notify_expiry(platform, "EXPIRED", cookie_record.expires_at)
+            elif (cookie_record.expires_at - now) < datetime.timedelta(days=7):
                 log.warning(
                     "cookie_expiring_soon",
                     platform=platform,
                     expires_at=cookie_record.expires_at,
-                    days_left=time_until_expiry.days,
+                    days_left=(cookie_record.expires_at - now).days,
+                )
+                await self._notify_expiry(
+                    platform,
+                    f"expiring in {(cookie_record.expires_at - now).days} days",
+                    cookie_record.expires_at,
                 )
 
         return str(file_path)
+
+    async def _notify_expiry(
+        self, platform: str, status: str, expires_at: datetime.datetime | None
+    ) -> None:
+        """Notify admins about cookie expiry."""
+        try:
+            from bot.main import bot_instance
+
+            bot = bot_instance
+            expiry_str = str(expires_at) if expires_at else "Unknown"
+            msg = f"🍪 <b>Cookie Warning: {platform}</b>\nStatus: <code>{status}</code>\nExpires: <code>{expiry_str}</code>"
+
+            if not bot:
+                bot = Bot(token=settings.bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+                await notify_admins(bot, msg)
+                await bot.session.close()
+            else:
+                await notify_admins(bot, msg)
+        except Exception as e:
+            log.error("failed_to_notify_cookie_expiry", error=str(e))
 
     async def save_cookie_file(
         self, platform: str, content_bytes: bytes, uploaded_by_user_id: uuid.UUID
@@ -100,7 +145,7 @@ class CookieManager:
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}.txt"
-        save_path = settings.cookies.path / platform / filename
+        save_path = settings.cookies.cookies_dir / platform / filename
 
         try:
 
@@ -173,6 +218,9 @@ class CookieManager:
                 cookie_record.last_validated_at = datetime.datetime.now(datetime.timezone.utc)
                 if not is_working:
                     log.error("cookie_validation_failed", platform=platform, error=error_msg)
+                    await self._notify_expiry(
+                        platform, f"Validation failed: {error_msg}", cookie_record.expires_at
+                    )
 
                 results[platform] = is_working
 
@@ -219,8 +267,6 @@ class CookieManager:
                 try:
                     ts = int(fields[4])
                     if ts > 0:
-                        # Some cookies use 0 or very large numbers for "never expire"
-                        # We limit it to a reasonable future date for safety
                         if ts > 2147483647:  # Year 2038 problem
                             ts = 2147483647
                         expiries.append(
@@ -235,11 +281,10 @@ class CookieManager:
         """Extract netloc from URL or return lowercase domain."""
         if "://" in url_or_domain:
             parsed = urlparse(url_or_domain)
-            domain = parsed.netloc.lower()
+            domain = (parsed.netloc or parsed.path).lower()
         else:
             domain = url_or_domain.lower()
 
-        # Remove www.
         if domain.startswith("www."):
             domain = domain[4:]
         return domain
@@ -253,17 +298,18 @@ class CookieManager:
             "twitter.com": "twitter",
             "x.com": "twitter",
             "tiktok.com": "tiktok",
+            "reddit.com": "reddit",
+            "redd.it": "reddit",
+            "facebook.com": "facebook",
+            "fb.watch": "facebook",
         }
-        # First check exact mapping
         if domain in mapping:
             return mapping[domain]
 
-        # Then check if domain ends with any of the keys (e.g. m.youtube.com)
         for key_domain, platform in mapping.items():
             if domain.endswith(f".{key_domain}"):
                 return platform
 
-        # If it's already a platform key, return it
         if domain in settings.cookies.cookie_platforms:
             return domain
 
@@ -276,6 +322,8 @@ class CookieManager:
             "instagram": "https://www.instagram.com/reels/C4p7OJyis8u/",
             "twitter": "https://twitter.com/X/status/1769800000000000000",
             "tiktok": "https://www.tiktok.com/@tiktok/video/7346859664673328427",
+            "reddit": "https://www.reddit.com/r/videos/comments/17vzmzz/the_oldest_known_video_of_london_1890/",
+            "facebook": "https://www.facebook.com/facebook/videos/10153231339986729/",
         }
         return urls.get(platform)
 

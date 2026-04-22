@@ -11,8 +11,15 @@ from config.settings import settings
 from database import crud
 from database.models import JobStatus
 from database.session import get_db
-from queues.broker import broker
-from utils.ytdlp import YtDlpAuthError, YtDlpExtractError, build_format_selector, fetch_metadata, select_best_format
+from task_queue.broker import broker
+from utils.bot import get_bot
+from utils.ytdlp import (
+    YtDlpAuthError,
+    YtDlpExtractError,
+    fetch_metadata,
+    get_format_selector,
+    select_best_format,
+)
 from workers.download import download_task
 
 log = structlog.get_logger(__name__)
@@ -34,13 +41,13 @@ async def preflight_task(
     job_id = uuid.UUID(job_id_str)
 
     # 1. Content-aware cache check
-    # url_hash = SHA256(url + format_quality)
     url_hash = hashlib.sha256(f"{url}{format_quality}".encode()).hexdigest()
 
     async with get_db() as session:
         from sqlalchemy import select
+
         from database.models import DownloadJob
-        
+
         # Query for a completed job with same url_hash and a valid telegram_file_id
         stmt = (
             select(DownloadJob)
@@ -66,24 +73,18 @@ async def preflight_task(
     except YtDlpAuthError as e:
         log.error("preflight_auth_error", job_id=job_id_str, error=str(e))
         await _fail_job(
-            job_id,
-            "Authentication required. Admin needs to set up cookies.",
-            "YtDlpAuthError"
+            job_id, "Authentication required. Admin needs to set up cookies.", "YtDlpAuthError"
         )
         await _notify_user(
             chat_id,
             message_id,
-            "❌ This video requires authentication. Please notify the administrator to update cookies."
+            "❌ This video requires authentication. Please notify the administrator to update cookies.",
         )
         return
     except YtDlpExtractError as e:
         log.error("preflight_extract_error", job_id=job_id_str, error=str(e))
         await _fail_job(job_id, f"Failed to extract metadata: {e}", "YtDlpExtractError")
-        await _notify_user(
-            chat_id,
-            message_id,
-            f"❌ Could not get video info: {e}"
-        )
+        await _notify_user(chat_id, message_id, f"❌ Could not get video info: {e}")
         return
     except Exception as e:
         log.exception("preflight_unexpected_error", job_id=job_id_str)
@@ -107,47 +108,30 @@ async def preflight_task(
     await redis.set(title_cache_key, preflight.title, ex=3600)
 
     # 5. Large file warning
-    # We need to select the best format to estimate size
-    formats_dicts = []
-    for f in preflight.formats:
-        f_dict = {
-            "format_id": f.format_id,
-            "ext": f.ext,
-            "filesize": f.filesize,
-            "vcodec": f.vcodec,
-            "acodec": f.acodec,
-        }
-        if f.resolution and "x" in f.resolution:
-            f_dict["height"] = int(f.resolution.split("x")[1])
-        formats_dicts.append(f_dict)
-    
-    best_format = select_best_format(formats_dicts, format_quality)
-    
+    best_format = select_best_format(preflight.formats, format_quality)
+
     filesize_bytes = best_format.filesize if best_format else None
     estimated_size_mb = filesize_bytes / (1024 * 1024) if filesize_bytes else 0
 
     if estimated_size_mb > settings.ffmpeg.large_file_warn_mb:
         log.info("large_file_warning", job_id=job_id_str, size_mb=estimated_size_mb)
-        
+
         # Store job_id in Redis for confirmation
         confirm_key = f"confirm:{chat_id}:{message_id}"
         await redis.set(confirm_key, job_id_str, ex=300)
-        
+
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text=f"✅ Yes download ({int(estimated_size_mb)}MB)",
-                        callback_data=f"confirm_dl:{job_id_str}"
+                        callback_data=f"confirm_dl:{job_id_str}",
                     ),
-                    InlineKeyboardButton(
-                        text="❌ Cancel",
-                        callback_data=f"cancel_dl:{job_id_str}"
-                    )
+                    InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_dl:{job_id_str}"),
                 ]
             ]
         )
-        
+
         await _notify_user(
             chat_id,
             message_id,
@@ -155,14 +139,14 @@ async def preflight_task(
             f"The estimated size is <b>{int(estimated_size_mb)}MB</b>. "
             f"This might take a while to process and upload.\n\n"
             f"Do you want to proceed?",
-            reply_markup=kb
+            reply_markup=kb,
         )
         return
 
     # 6. Normal flow: notify and chain
     await _notify_user(chat_id, message_id, f"⬇️ Downloading: <b>{preflight.title}</b>...")
-    
-    format_selector = build_format_selector(format_quality)
+
+    format_selector = get_format_selector(url, format_quality)
 
     await download_task.kiq(
         url=url,
@@ -175,31 +159,29 @@ async def preflight_task(
     )
 
 
-async def _deliver_cached_result(cached_job, current_job_id: uuid.UUID, chat_id: int, message_id: int) -> None:
+async def _deliver_cached_result(
+    cached_job, current_job_id: uuid.UUID, chat_id: int, message_id: int
+) -> None:
     """Send a previously uploaded file instantly."""
-    bot = _get_bot()
-    
+    bot = get_bot()
+
     # 1. Notify user
     await bot.edit_message_text(
         chat_id=chat_id,
         message_id=message_id,
-        text="⚡ <b>Instant Delivery!</b> Found this in my cache. Sending..."
+        text="⚡ <b>Instant Delivery!</b> Found this in my cache. Sending...",
     )
-    
+
     # 2. Send file via file_id
     try:
         await bot.send_video(
             chat_id=chat_id,
             video=cached_job.telegram_file_id,
-            caption=f"✅ {cached_job.filename or 'Downloaded video'}\n(Delivered from cache)"
+            caption=f"✅ {cached_job.filename or 'Downloaded video'}\n(Delivered from cache)",
         )
     except Exception as e:
         log.error("cache_delivery_failed", job_id=str(current_job_id), error=str(e))
-        # If cache delivery fails (e.g. file_id invalid), we should probably proceed to download
-        # but for now we follow the instruction.
         await bot.send_message(chat_id, "❌ Failed to deliver from cache. Retrying download...")
-        # Actually it's better to just proceed with normal flow if cache delivery fails
-        # but the prompt says HIT: call _deliver_cached_result() -> send file_id -> return
         return
 
     # 3. Update current job as DONE
@@ -219,30 +201,17 @@ async def _fail_job(job_id: uuid.UUID, error: str, error_type: str) -> None:
     """Update job status to FAILED in DB."""
     async with get_db() as session:
         await crud.update_job_status(
-            session,
-            job_id,
-            JobStatus.FAILED,
-            error_message=error,
-            error_type=error_type
+            session, job_id, JobStatus.FAILED, error_message=error, error_type=error_type
         )
 
 
 async def _notify_user(chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
     """Edit message or send new one to notify user."""
-    bot = _get_bot()
+    bot = get_bot()
     try:
         await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup
+            chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup
         )
     except Exception:
         # Fallback if message can't be edited (e.g. too old or deleted)
         await bot.send_message(chat_id, text, reply_markup=reply_markup)
-
-
-def _get_bot():
-    """Import and return the bot instance."""
-    from bot.main import bot
-    return bot

@@ -12,7 +12,6 @@ class BotSettings(BaseModel):
 
     token: str
     admin_ids: list[int] = Field(default_factory=list)
-    use_local_api: bool = False
     webhook_url: Optional[str] = None
     webhook_secret: Optional[str] = None
 
@@ -34,7 +33,10 @@ class BotSettings(BaseModel):
 class LocalApiSettings(BaseModel):
     """Local Telegram Bot API settings."""
 
-    base_url: str = "http://localhost:8081"
+    enabled: bool = False
+    url: str = "http://localhost:8081"
+    api_id: str | None = None
+    api_hash: str | None = None
     working_dir: pathlib.Path = pathlib.Path("/tmp/telegram-bot-api")
 
 
@@ -97,7 +99,7 @@ class ProxySettings(BaseModel):
     force_proxy_platforms: list[str] = Field(default_factory=lambda: ["youtube.com", "youtu.be"])
     no_proxy_platforms: list[str] = Field(default_factory=list)
     health_check_interval_seconds: int = 300
-    health_check_url: str = "http://www.google.com"
+    health_check_url: str = "https://www.google.com"
     rotation_strategy: Literal[
         "round_robin", "random", "least_used", "least_errors"
     ] = "round_robin"
@@ -115,10 +117,10 @@ class CookieSettings(BaseModel):
     """yt-dlp cookie settings."""
 
     enabled: bool = True
-    path: pathlib.Path = pathlib.Path("data/cookies")
+    cookies_dir: pathlib.Path = pathlib.Path("data/cookies")
     validate_on_startup: bool = False
     cookie_platforms: list[str] = Field(
-        default_factory=lambda: ["youtube", "instagram", "twitter", "tiktok"]
+        default_factory=lambda: ["youtube", "instagram", "twitter", "tiktok", "reddit", "facebook"]
     )
 
     @field_validator("cookie_platforms", mode="before")
@@ -133,9 +135,9 @@ class CookieSettings(BaseModel):
 class RedditSettings(BaseModel):
     """Reddit API settings."""
 
-    client_id: str | None = None
-    client_secret: str | None = None
     user_agent: str = "MEDDOWBOT/1.0.0"
+    enabled: bool = False
+    max_posts_per_request: int = 50
 
 
 class ObservabilitySettings(BaseModel):
@@ -162,6 +164,7 @@ class Settings(BaseSettings):
     )
 
     env: Literal["dev", "prod", "test"] = "dev"
+    version: str = "1.0.0"
 
     bot: BotSettings
     local_api: LocalApiSettings = Field(default_factory=LocalApiSettings)

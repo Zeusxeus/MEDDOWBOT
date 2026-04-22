@@ -73,7 +73,7 @@ media-downloader-bot/
 │   ├── preflight.py             ← metadata only, format select, large-file warn
 │   └── download.py              ← download → compress → upload → notify
 │
-├── queue/
+├── task_queue/
 │   ├── __init__.py
 │   └── broker.py                ← Taskiq broker singleton
 │
@@ -2780,7 +2780,7 @@ from sqlalchemy import select
 from config.settings import settings
 from database.models import DownloadJob, JobStatus
 from database.session import get_db
-from queue.broker import broker
+from task_queue.broker import broker
 from utils.ytdlp import fetch_metadata, YtDlpExtractError, YtDlpAuthError
 
 log = structlog.get_logger(__name__)
@@ -3019,7 +3019,7 @@ from observability.metrics import (
     job_duration_seconds,
     bytes_served_total,
 )
-from queue.broker import broker
+from task_queue.broker import broker
 from utils.ffmpeg import compress_video, needs_compression, FFmpegError
 from utils.quota import check_disk_space, DiskSpaceError, check_and_increment_concurrent, decrement_concurrent
 from utils.upload import upload_file
@@ -3323,7 +3323,7 @@ from sqlalchemy import select
 from config.settings import settings
 from database.models import DownloadJob, JobStatus, UserSettings
 from database.session import get_db
-from queue.broker import broker
+from task_queue.broker import broker
 from workers.preflight import preflight_task
 
 log = structlog.get_logger(__name__)
@@ -4165,7 +4165,7 @@ from middleware.rate_limit import RateLimitMiddleware
 from middleware.ssrf import SSRFProtectionMiddleware
 from observability.logging import configure_logging
 from observability.metrics import setup_metrics
-from queue.broker import broker
+from task_queue.broker import broker
 from utils.proxy import proxy_pool
 
 log = structlog.get_logger(__name__)
@@ -4515,7 +4515,7 @@ services:
       dockerfile: docker/Dockerfile
     command: >
       python -m taskiq worker
-      queue.broker:broker
+      task_queue.broker:broker
       workers.preflight
       workers.download
       --workers ${WORKER__CONCURRENCY:-3}
@@ -5078,12 +5078,12 @@ Day 7:
   [ ] utils/quota.py (disk check + concurrent counter)
   [ ] cache/rate_limiter.py (Lua script)
   [ ] cache/progress.py (pub/sub + throttle)
-  [ ] queue/broker.py (Taskiq setup)
+  [ ] task_queue/broker.py (Taskiq setup)
 
 Day 8:
   [ ] workers/preflight.py
   [ ] workers/download.py
-  [ ] Test worker: taskiq worker queue.broker:broker workers.preflight
+  [ ] Test worker: taskiq worker task_queue.broker:broker workers.preflight
   [ ] Submit a test job, verify it runs
 ```
 

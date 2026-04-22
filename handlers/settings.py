@@ -3,91 +3,154 @@ from __future__ import annotations
 import structlog
 from aiogram import Router, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database import crud
-from database.models import UserSettings
+from database.models import User, UserSettings
 from database.session import get_db
 
 log = structlog.get_logger(__name__)
-router = Router()
+router = Router(name="settings")
+
+QUALITIES = {
+    "360": "360p",
+    "480": "480p",
+    "720": "720p",
+    "1080": "1080p",
+    "audio": "Audio",
+    "best": "Best",
+}
 
 
-def build_settings_keyboard(settings: UserSettings) -> types.InlineKeyboardMarkup:
-    """Build settings keyboard based on user preferences."""
-    quality_options = ["360", "480", "720", "1080", "2160"]
-    buttons = []
-
-    # Quality row
-    quality_row = []
-    for q in quality_options:
-        label = f"✅ {q}p" if settings.format_quality == q else f"{q}p"
-        quality_row.append(types.InlineKeyboardButton(text=label, callback_data=f"quality:{q}"))
-    buttons.append(quality_row)
-
-    # Boolean toggles
-    toggles = [
-        ("Subtitles", "prefer_subtitles"),
-        ("Audio Only", "prefer_audio_only"),
-    ]
-    for label, field in toggles:
-        val = getattr(settings, field)
-        status = "✅" if val else "❌"
-        buttons.append(
-            [
-                types.InlineKeyboardButton(
-                    text=f"{label}: {status}", callback_data=f"toggle:{field}"
-                )
-            ]
-        )
-
-    return types.InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-@router.message(Command("settings"))
-async def handle_settings(message: types.Message) -> None:
-    """Show user settings panel."""
-    async with get_db() as session:
-        user = await crud.upsert_user(session, message.from_user.id, message.from_user.username)  # type: ignore
-        if not user.settings:
-            # Should be created by upsert_user
-            return
-
-    await message.reply(
-        "🛠 <b>Your Settings</b>\nConfigure download preferences below:",
-        reply_markup=build_settings_keyboard(user.settings),
+def get_settings_text(settings: UserSettings) -> str:
+    """Generate the settings panel text."""
+    compress = "ON" if settings.compression_enabled else "OFF"
+    progress = "ON" if settings.show_progress else "OFF"
+    
+    return (
+        "┌─────────────────────────────────────┐\n"
+        "│ ⚙️ <b>Your Settings</b>                    │\n"
+        "│                                     │\n"
+        f"│ 📊 Quality: <b>{settings.format_quality}p</b>                │\n"
+        f"│ 🗜️ Auto-compress: <b>{compress}</b>               │\n"
+        f"│ 📶 Progress updates: <b>{progress}</b>             │\n"
+        f"│ 📏 Max file size: <b>{settings.max_file_size}MB</b>              │\n"
+        "└─────────────────────────────────────┘"
     )
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith("quality:"))
-async def handle_quality_callback(callback: types.CallbackQuery) -> None:
-    """Update preferred video quality."""
-    quality = callback.data.split(":")[1] if callback.data else "720"
+def build_settings_keyboard(settings: UserSettings) -> types.InlineKeyboardMarkup:
+    """Build the main settings keyboard."""
+    builder = InlineKeyboardBuilder()
+    
+    compress_status = "✅ ON" if settings.compression_enabled else "❌ OFF"
+    progress_status = "✅ ON" if settings.show_progress else "❌ OFF"
+    
+    builder.button(text="📊 Quality ▶", callback_data="settings:quality_menu")
+    builder.button(text=f"🗜️ Compress: {compress_status}", callback_data="settings:toggle:compression_enabled")
+    builder.button(text=f"📶 Progress: {progress_status}", callback_data="settings:toggle:show_progress")
+    builder.button(text="📋 History", callback_data="history:list")
+    builder.button(text="❌ Close", callback_data="settings:close")
+    
+    builder.adjust(1, 2, 2)
+    return builder.as_markup()
+
+
+def build_quality_keyboard(current_quality: str) -> types.InlineKeyboardMarkup:
+    """Build the quality sub-menu keyboard with checkmarks."""
+    builder = InlineKeyboardBuilder()
+    for q_code, q_label in QUALITIES.items():
+        text = f"✓ {q_label}" if q_code == current_quality else q_label
+        builder.button(text=text, callback_data=f"settings:quality:{q_code}")
+    
+    builder.button(text="◀ Back", callback_data="settings:main")
+    builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
+
+
+@router.message(Command("settings"))
+async def handle_settings(message: Message, db_user: User) -> None:
+    """Show comprehensive settings panel."""
+    if not db_user.settings:
+        return
+
+    await message.reply(
+        get_settings_text(db_user.settings),
+        reply_markup=build_settings_keyboard(db_user.settings),
+    )
+
+
+@router.callback_query(lambda c: c.data == "settings:main")
+async def handle_main_settings(callback: CallbackQuery, db_user: User) -> None:
+    """Return to main settings menu."""
+    if not db_user.settings or not isinstance(callback.message, Message):
+        return
+
+    await callback.message.edit_text(
+        get_settings_text(db_user.settings),
+        reply_markup=build_settings_keyboard(db_user.settings),
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "settings:quality_menu")
+async def handle_quality_menu(callback: CallbackQuery, db_user: User) -> None:
+    """Show quality sub-menu."""
+    if not db_user.settings or not isinstance(callback.message, Message):
+        return
+
+    await callback.message.edit_text(
+        "📊 <b>Select Download Quality</b>\nChoose your preferred resolution:",
+        reply_markup=build_quality_keyboard(db_user.settings.format_quality),
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("settings:quality:"))
+async def handle_quality_set(callback: CallbackQuery, db_user: User) -> None:
+    """Update quality preference."""
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+
+    quality = callback.data.split(":")[-1]
     async with get_db() as session:
-        user = await crud.upsert_user(session, callback.from_user.id, callback.from_user.username)
-        await crud.update_user_settings(session, user.id, format_quality=quality)
-        updated_user = await crud.get_user_by_telegram_id(session, callback.from_user.id)
+        await crud.update_user_settings(session, db_user.id, format_quality=quality)
+        # Refresh user settings from DB for text update
+        user = await crud.get_user_by_telegram_id(session, db_user.telegram_id)
+        if user and user.settings:
+            await callback.message.edit_reply_markup(
+                reply_markup=build_quality_keyboard(user.settings.format_quality)
+            )
 
-    if updated_user and updated_user.settings and isinstance(callback.message, Message):
-        await callback.message.edit_reply_markup(
-            reply_markup=build_settings_keyboard(updated_user.settings)
-        )
-    await callback.answer(f"Quality set to {quality}")
+    await callback.answer(f"✅ Quality set to {QUALITIES.get(quality, quality)}")
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith("toggle:"))
-async def handle_toggle_callback(callback: types.CallbackQuery) -> None:
+@router.callback_query(lambda c: c.data and c.data.startswith("settings:toggle:"))
+async def handle_toggle(callback: CallbackQuery, db_user: User) -> None:
     """Toggle boolean settings."""
-    field = callback.data.split(":")[1] if callback.data else ""
-    async with get_db() as session:
-        user = await crud.upsert_user(session, callback.from_user.id, callback.from_user.username)
-        if user.settings:
-            current_val = getattr(user.settings, field)
-            await crud.update_user_settings(session, user.id, **{field: not current_val})
-        updated_user = await crud.get_user_by_telegram_id(session, callback.from_user.id)
+    if not db_user.settings or not callback.data or not isinstance(callback.message, Message):
+        return
 
-    if updated_user and updated_user.settings and isinstance(callback.message, Message):
-        await callback.message.edit_reply_markup(
-            reply_markup=build_settings_keyboard(updated_user.settings)
-        )
-    await callback.answer(f"Toggled {field.replace('_', ' ')}")
+    field = callback.data.split(":")[-1]
+    current_val = getattr(db_user.settings, field)
+    new_val = not current_val
+
+    async with get_db() as session:
+        await crud.update_user_settings(session, db_user.id, **{field: new_val})
+        user = await crud.get_user_by_telegram_id(session, db_user.telegram_id)
+        if user and user.settings:
+            await callback.message.edit_text(
+                get_settings_text(user.settings),
+                reply_markup=build_settings_keyboard(user.settings),
+            )
+
+    await callback.answer(f"✅ {field.replace('_', ' ').title()} turned {'ON' if new_val else 'OFF'}")
+
+
+@router.callback_query(lambda c: c.data == "settings:close")
+async def handle_close(callback: CallbackQuery) -> None:
+    """Close the settings panel."""
+    if isinstance(callback.message, Message):
+        await callback.message.delete()
+    await callback.answer()

@@ -21,7 +21,8 @@ class AuthMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        user = getattr(event, "from_user", None)
+        # aiogram 3.x populates 'event_from_user' in data
+        user = data.get("event_from_user")
         if not user or user.is_bot:
             return await handler(event, data)
 

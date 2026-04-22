@@ -85,3 +85,9 @@ uv run mypy .                  # Type check
 docker compose up -d           # Start infrastructure
 alembic upgrade head           # Run migrations
 ```
+
+## yt-dlp Update Schedule
+yt-dlp must be updated MONTHLY. YouTube breaks old versions.
+Command: uv sync --upgrade-package yt-dlp
+Run after: uv run yt-dlp --version
+Test: python test above

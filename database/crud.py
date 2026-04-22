@@ -128,6 +128,41 @@ async def update_job_status(
     await session.execute(stmt)
 
 
+async def cancel_job(session: AsyncSession, job_id: uuid.UUID) -> bool:
+    """
+    Cancel an active job. Returns True if successfully cancelled.
+    Only PENDING or RUNNING jobs can be cancelled.
+    """
+    stmt = (
+        update(DownloadJob)
+        .where(
+            DownloadJob.id == job_id,
+            DownloadJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+        )
+        .values(
+            status=JobStatus.CANCELLED,
+            completed_at=datetime.now(UTC),
+        )
+    )
+    result = await session.execute(stmt)
+    return result.rowcount > 0
+
+
+async def get_active_job_by_user(session: AsyncSession, user_id: uuid.UUID) -> Optional[DownloadJob]:
+    """Get the most recent active job for a user."""
+    stmt = (
+        select(DownloadJob)
+        .where(
+            DownloadJob.user_id == user_id,
+            DownloadJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+        )
+        .order_by(DownloadJob.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_user_history(
     session: AsyncSession, user_id: uuid.UUID, limit: int = 10, offset: int = 0
 ) -> Sequence[DownloadJob]:
@@ -141,6 +176,21 @@ async def get_user_history(
     )
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+async def count_user_history(session: AsyncSession, user_id: uuid.UUID) -> int:
+    """Count total jobs for a user."""
+    from sqlalchemy import func
+
+    stmt = select(func.count()).select_from(DownloadJob).where(DownloadJob.user_id == user_id)
+    result = await session.execute(stmt)
+    return result.scalar() or 0
+
+
+async def clear_user_history(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Delete all job history for a user."""
+    stmt = delete(DownloadJob).where(DownloadJob.user_id == user_id)
+    await session.execute(stmt)
 
 
 # ─────────────────────────────────────────────

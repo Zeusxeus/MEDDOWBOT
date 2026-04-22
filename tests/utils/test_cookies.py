@@ -80,7 +80,7 @@ class TestCookieManager:
         cookie_file_path = cookie_dir / filename
         cookie_file_path.write_text("dummy content")
         
-        monkeypatch.setattr(settings.cookies, "path", tmp_path)
+        monkeypatch.setattr(settings.cookies, "cookies_dir", tmp_path)
         
         # Create DB record
         cookie_record = CookieFile(

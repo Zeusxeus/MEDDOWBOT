@@ -34,22 +34,21 @@ class TestAuthMiddleware:
     async def test_non_user_event(self, middleware, handler):
         """Test that events without from_user are passed through."""
         event = MagicMock()
-        event.from_user = None
-        data = {}
+        data = {}  # event_from_user is missing
         await middleware(handler, event, data)
         handler.assert_called_once_with(event, data)
 
     async def test_bot_user_event(self, middleware, handler):
         """Test that events from bots are passed through."""
         event = MagicMock()
-        event.from_user = TelegramUser(id=123, is_bot=True, first_name="Bot")
-        data = {}
+        user = TelegramUser(id=123, is_bot=True, first_name="Bot")
+        data = {"event_from_user": user}
         await middleware(handler, event, data)
         handler.assert_called_once_with(event, data)
 
     async def test_new_user_creation(self, middleware, handler, message, mock_db_session):
         """Test that a new user is created in the database."""
-        data = {}
+        data = {"event_from_user": message.from_user}
         await middleware(handler, message, data)
 
         handler.assert_called_once()
@@ -68,7 +67,7 @@ class TestAuthMiddleware:
         db_session.add(user)
         await db_session.commit()
 
-        data = {}
+        data = {"event_from_user": message.from_user}
         await middleware(handler, message, data)
 
         handler.assert_called_once()
@@ -85,7 +84,7 @@ class TestAuthMiddleware:
         db_session.add(user)
         await db_session.commit()
 
-        data = {}
+        data = {"event_from_user": message.from_user}
         await middleware(handler, message, data)
 
         handler.assert_not_called()

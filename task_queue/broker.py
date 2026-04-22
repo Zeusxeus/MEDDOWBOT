@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import structlog
+from taskiq import TaskiqEvents, TaskiqState
 from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
+from cache.client import init_redis
 from config.settings import settings
 
 log = structlog.get_logger(__name__)
@@ -15,10 +17,16 @@ result_backend: RedisAsyncResultBackend = RedisAsyncResultBackend(
 )
 
 # Initialize Taskiq Broker
-# We use .with_result_backend() as recommended by Taskiq
-broker: ListQueueBroker = ListQueueBroker(
+broker = ListQueueBroker(
     url=settings.redis.url,
 ).with_result_backend(result_backend)
 
-# Set up logging for Taskiq
-log.info("Taskiq broker initialized", redis_url=settings.redis.url)
+
+@broker.on_event(TaskiqEvents.WORKER_STARTUP)
+async def startup_event(_: TaskiqState) -> None:
+    """Initialize essential services on worker startup."""
+    await init_redis()
+    log.info("taskiq_worker_startup_complete")
+
+
+log.info("taskiq_broker_initialized", url=settings.redis.url)

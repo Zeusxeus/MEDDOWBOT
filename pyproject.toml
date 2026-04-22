@@ -15,13 +15,13 @@ dependencies = [
     "pydantic==2.9.2",
     "pydantic-settings==2.5.2",
     "redis[hiredis]==5.2.0",
-    "yt-dlp==2024.12.13",
+    "yt-dlp[default]>=2025.1.1",
     "aiofiles==24.1.0",
-    "asyncpraw==7.8.1",
     "structlog==24.4.0",
     "prometheus-client==0.21.0",
     "httpx==0.28.0",
     "python-magic==0.4.27",
+    "curl-cffi<0.15.0",
 ]
 
 [dependency-groups]
@@ -39,3 +39,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_default_fixture_loop_scope = "function"
+
+[[tool.uv.index]]
+url = "https://nightly.link/yt-dlp/yt-dlp/workflows/build/master/yt-dlp.zip"

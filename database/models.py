@@ -149,6 +149,12 @@ class UserSettings(Base):
     # False = only notify on completion
     show_progress: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Preferred language for the bot interface
+    language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
+
+    # Max file size in MB
+    max_file_size: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -404,7 +410,7 @@ class CookieFile(Base):
     def file_path(self) -> str:
         from config.settings import settings
 
-        return str(settings.cookies.path / self.platform / self.filename)
+        return str(settings.cookies.cookies_dir / self.platform / self.filename)
 
     def __repr__(self) -> str:
         return f"<CookieFile platform={self.platform} active={self.is_active}>"

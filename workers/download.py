@@ -8,14 +8,15 @@ from uuid import UUID
 
 import structlog
 
-from bot.main import bot
 from cache.progress import publish_progress, start_progress_listener
 from config.settings import settings
 from database import crud
 from database.models import JobStatus
 from database.session import get_db
-from queues.broker import broker
+from task_queue.broker import broker
+from utils.bot import get_bot
 from utils.ffmpeg import compress_video, needs_compression
+from utils.notify import notify_admins
 from utils.upload import upload_file
 from utils.ytdlp import download_media
 
@@ -38,9 +39,17 @@ async def download_task(
     job_id = UUID(job_id_str)
     log.info("download_task_started", job_id=job_id_str, url=url)
 
-    if bot is None:
-        log.error("bot_not_initialized")
-        return
+    bot = get_bot()
+
+    # 0. Check disk space
+    total, used, free = shutil.disk_usage(settings.disk.downloads_path)
+    free_gb = free / (2**30)
+    if free_gb < settings.disk.min_free_gb:
+        log.error("low_disk_space", free_gb=free_gb)
+        await notify_admins(
+            bot,
+            f"⚠️ <b>Low Disk Space!</b>\nFree: <code>{free_gb:.2f} GB</code>\nThreshold: <code>{settings.disk.min_free_gb} GB</code>",
+        )
 
     # 1. Update job status to RUNNING
     async with get_db() as session:
@@ -59,9 +68,7 @@ async def download_task(
     try:
         # 3. Edit message: "⏬ Downloading..."
         await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="⏬ <b>Downloading...</b> (0%)"
+            chat_id=chat_id, message_id=message_id, text="⏬ <b>Downloading...</b> (0%)"
         )
 
         # 4. Create progress callback that publishes to Redis
@@ -72,13 +79,17 @@ async def download_task(
                     percent = float(p)
                 except ValueError:
                     percent = 0.0
-                
+
                 speed = d.get("_speed_str", "N/A")
                 eta = d.get("_eta_str", "N/A")
-                
+
                 # We need to run this async, but the callback is sync called from thread
-                loop = asyncio.get_event_loop()
-                loop.create_task(publish_progress(job_id_str, percent, speed, eta))
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(publish_progress(job_id_str, percent, speed, eta))
+                except RuntimeError:
+                    pass
 
         # 5. Start start_progress_listener() as asyncio Task
         progress_task = asyncio.create_task(
@@ -97,8 +108,8 @@ async def download_task(
         # 7. Check if needs compression
         max_bytes = settings.ffmpeg.max_size_mb * 1024 * 1024
         file_to_upload = download_result.file_path
-        
-        if not settings.bot.use_local_api and needs_compression(file_to_upload, max_bytes):
+
+        if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
             # 8. If compression needed
             async with get_db() as session:
                 await crud.update_job_status(
@@ -107,31 +118,29 @@ async def download_task(
                     JobStatus.RUNNING,
                     heartbeat_at=datetime.now(UTC),
                 )
-            
+
             await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="⚙️ <b>Compressing video...</b> (this may take a few minutes)"
+                text="⚙️ <b>Compressing video...</b> (this may take a few minutes)",
             )
-            
+
             # Cancel progress task as it's for downloading
             if progress_task:
                 progress_task.cancel()
-            
+
             file_to_upload = await compress_video(file_to_upload, settings.ffmpeg.target_mb)
 
         # 9. Edit message: "📤 Uploading..."
         await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="📤 <b>Uploading to Telegram...</b>"
+            chat_id=chat_id, message_id=message_id, text="📤 <b>Uploading to Telegram...</b>"
         )
 
         # 10. upload_file()
         file_id = await upload_file(
             chat_id=chat_id,
             file_path=file_to_upload,
-            caption=f"✅ <b>{download_result.filename}</b>"
+            caption=f"✅ <b>{download_result.filename}</b>",
         )
 
         # 11. Success
@@ -157,6 +166,7 @@ async def download_task(
 
     except Exception as e:
         log.exception("download_task_failed", job_id=job_id_str, error=str(e))
+
         async with get_db() as session:
             await crud.update_job_status(
                 session,
@@ -164,20 +174,24 @@ async def download_task(
                 JobStatus.FAILED,
                 error_message=str(e)[:500],
             )
-        
-        if bot:
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"❌ <b>Download failed</b>\n\nURL: {url}\nError: <code>{str(e)[:200]}</code>"
-                )
-            except Exception:
-                log.error("failed_to_send_error_message", chat_id=chat_id)
+
+        await notify_admins(
+            bot,
+            f"❌ <b>Job Failed!</b>\nJob ID: <code>{job_id_str}</code>\nURL: {url}\nError: <code>{str(e)[:200]}</code>",
+        )
+
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ <b>Download failed</b>\n\nURL: {url}\nError: <code>{str(e)[:200]}</code>",
+            )
+        except Exception:
+            log.error("failed_to_send_error_message", chat_id=chat_id)
 
     finally:
         if progress_task and not progress_task.done():
             progress_task.cancel()
-        
+
         # Cleanup temp files
         try:
             if tmp_dir.exists():
