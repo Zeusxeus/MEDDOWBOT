@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     disk: DiskSettings = Field(default_factory=DiskSettings)
     ffmpeg: FFmpegSettings = Field(default_factory=FFmpegSettings)
-    proxy_pool: ProxySettings = Field(default_factory=ProxySettings)
+    bot_proxy_pool: ProxySettings = Field(default_factory=ProxySettings)
     cookies: CookieSettings = Field(default_factory=CookieSettings)
     reddit: RedditSettings = Field(default_factory=RedditSettings)
     obs: ObservabilitySettings = Field(default_factory=ObservabilitySettings)

@@ -205,9 +205,9 @@ MEDDOWBOT uses Pydantic Settings for strict type-validated configuration. You ca
 ### Proxy Pool
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PROXY_POOL__ENABLED` | `true` | No | Enable residential proxy pool |
-| `PROXY_POOL__ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
-| `PROXY_POOL__FORCE_PROXY_PLATFORMS` | `youtube.com,youtu.be` | No | Domains that MUST use proxies |
+| `BOT_PROXY_POOL__ENABLED` | `true` | No | Enable residential proxy pool |
+| `BOT_PROXY_POOL__ROTATION_STRATEGY` | `round_robin` | No | Proxy selection algorithm |
+| `BOT_PROXY_POOL__FORCE_PROXY_PLATFORMS` | `youtube.com,youtu.be` | No | Domains that MUST use proxies |
 
 ---
 
