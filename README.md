@@ -292,6 +292,67 @@ docker compose -f docker/docker-compose.yml up -d --scale worker=5
 
 ---
 
+## 🚀 Ubuntu VPS Setup (Step-by-Step)
+
+Follow these steps to deploy MEDDOWBOT on a fresh Ubuntu 22.04/24.04 VPS.
+
+### 1. System Preparation
+Update your package list and install basic requirements:
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl ffmpeg
+```
+
+### 2. Install Docker & Compose
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and log back in for group changes to take effect
+```
+
+### 3. Install uv (Fast Python Package Manager)
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.cargo/env
+```
+
+### 4. Clone and Configure
+```bash
+git clone https://github.com/Zeusxeus/MEDDOWBOT.git
+cd MEDDOWBOT
+cp .env.example .env
+nano .env
+```
+
+**Crucial Production Settings:**
+- `ENV=prod`
+- `BOT__TOKEN=your_token`
+- `BOT__ADMIN_IDS=your_id`
+- `DATABASE__URL=postgresql+asyncpg://botuser:botpass@postgres:5432/meddowbot`
+- `REDIS__URL=redis://redis:6379/0`
+
+### 5. Deploy with Docker
+MEDDOWBOT is fully containerized. To start the entire stack (Bot, Worker pool, Redis, Postgres):
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### 6. Initialize Database
+Run migrations inside the running bot container:
+```bash
+docker compose -f docker/docker-compose.yml exec bot uv run alembic upgrade head
+```
+
+### 7. Post-Setup Verification
+Check if all containers are healthy:
+```bash
+docker compose -f docker/docker-compose.yml ps
+```
+Visit `http://your-vps-ip:8080/health` to confirm the API and database connections are active.
+
+---
+
 ## 🔒 Security
 
 - **SSRF Middleware:** All incoming URLs are checked against private IP ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`) before being passed to workers.
