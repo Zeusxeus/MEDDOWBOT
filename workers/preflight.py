@@ -46,7 +46,8 @@ async def preflight_task(
     settings.cookies.cookies_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Content-aware cache check
-    url_hash = hashlib.sha256(f"{url}{format_quality}".encode()).hexdigest()
+    # Include quality in hash so different quality requests don't hit same cache
+    url_hash = hashlib.sha256(f"{url}:{format_quality}".encode()).hexdigest()
 
     async with get_db() as session:
         from sqlalchemy import select

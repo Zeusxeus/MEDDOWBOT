@@ -97,7 +97,8 @@ def get_format_selector(url: str, quality: str) -> str:
     if "youtube.com" in url_lower or "youtu.be" in url_lower:
         if quality == "best":
             return "bestvideo+bestaudio/best"
-        return f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
+        # Try to get exact height, or closest below it
+        return f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}]/best"
 
     # For other platforms (TikTok, Reddit, Twitter), be MUCH more permissive.
     # Often they only have one 'best' format, so [height<=...] can cause "format not found"
