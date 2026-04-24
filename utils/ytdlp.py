@@ -183,8 +183,9 @@ def build_ydl_opts(
     is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
     actual_cookie_file = cookie_file if is_youtube else None
     
-    # STRATEGY: Prioritize web and android, skip mweb/ios which require PO tokens more strictly
-    clients = ["web", "android"]
+    # ADVANCED CLIENT STRATEGY: Use TV and WebCreator to bypass PO Token requirement
+    # These clients are currently the best for data-center IPs (VPS)
+    clients = ["tv", "web", "web_creator", "mweb"]
 
     opts: dict[str, Any] = {
         "quiet": True,
@@ -207,6 +208,8 @@ def build_ydl_opts(
             }
         },
         "format": "bestvideo+bestaudio/best",
+        "youtube_include_dash_manifest": True,
+        "youtube_include_hls_manifest": True,
     }
     
     if node_path:
@@ -240,7 +243,6 @@ async def fetch_metadata(url: str, user_format_quality: str) -> PreflightResult:
         try:
             info = await _try_extract(opts)
         except (DownloadError, YtDlpAuthError) as e:
-            # FALLBACK: If cookies are invalid/blocked, try one more time WITHOUT cookies
             if opts.get("cookiefile"):
                 log.warning("cookie_extraction_failed_trying_without_cookies", url=url)
                 fallback_opts = opts.copy()
@@ -345,7 +347,6 @@ async def download_media(
         try:
             info = await _try_download(opts)
         except (DownloadError, YtDlpAuthError) as e:
-            # FALLBACK: If cookies are invalid, try one more time WITHOUT cookies
             if opts.get("cookiefile"):
                 log.warning("cookie_download_failed_trying_without_cookies", url=url)
                 fallback_opts = opts.copy()
