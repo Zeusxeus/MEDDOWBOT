@@ -196,12 +196,11 @@ def build_ydl_opts(
         "http_chunk_size": 10485760,  # 10MB
         "proxy": proxy_url,
         "cookiefile": cookie_file,
-        # MODERN BYPASS STRATEGY
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
         "check_formats": False,
         "extractor_args": {
             "youtube": {
-                "player_client": ["web", "mweb"],
+                "player_client": ["ios"],
                 "player_skip": ["webpage", "configs"],
             }
         },
