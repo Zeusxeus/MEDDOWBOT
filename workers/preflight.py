@@ -75,7 +75,8 @@ async def preflight_task(
 
     # 2. Fetch metadata from yt-dlp
     try:
-        preflight = await fetch_metadata(url, format_quality)
+        # Use "best" to fetch all formats during preflight
+        preflight = await fetch_metadata(url, "best")
     except YtDlpAuthError as e:
         log.error("preflight_auth_error", job_id=job_id_str, error=str(e))
         await _fail_job(
@@ -113,7 +114,43 @@ async def preflight_task(
     title_cache_key = f"title:{url_hash}"
     await redis.set(title_cache_key, preflight.title, ex=3600)
 
-    # 5. Large file warning
+    # 5. DYNAMIC QUALITY SELECTION (YouTube Only)
+    is_youtube = "youtube" in preflight.platform.lower()
+    # If it's youtube and we don't have a specific quality yet (it's still 'best' from handler)
+    if is_youtube and format_quality == "best":
+        log.info("requesting_quality_selection", url=url)
+        
+        builder = InlineKeyboardMarkup(inline_keyboard=[])
+        seen_res = set()
+        buttons = []
+        
+        # Collect common resolutions
+        for f in preflight.formats:
+            if f.vcodec != "none" and f.resolution:
+                h = f.resolution.split("x")[1] if "x" in f.resolution else f.resolution
+                if h not in seen_res and h in ["360", "480", "720", "1080", "1440", "2160"]:
+                    seen_res.add(h)
+                    buttons.append(InlineKeyboardButton(text=f"🎬 {h}p", callback_data=f"dl_q:{job_id_str}:{h}"))
+        
+        # Sort resolutions descending
+        buttons.sort(key=lambda x: int(x.callback_data.split(":")[-1]), reverse=True)
+        
+        # Add Audio option
+        buttons.append(InlineKeyboardButton(text="🎵 Audio (MP3)", callback_data=f"dl_q:{job_id_str}:audio"))
+        
+        # Grid of 2 columns
+        for i in range(0, len(buttons), 2):
+            builder.inline_keyboard.append(buttons[i:i+2])
+
+        await notify_user(
+            chat_id,
+            message_id,
+            f"🎬 <b>{preflight.title}</b>\n\nChoose quality to download:",
+            reply_markup=builder,
+        )
+        return
+
+    # 6. Large file warning (only for non-youtube or after selection)
     best_format = select_best_format(preflight.formats, format_quality)
 
     filesize_bytes = best_format.filesize if best_format else None
@@ -149,7 +186,7 @@ async def preflight_task(
         )
         return
 
-    # 6. Success -> chain to download task
+    # 7. Success -> chain to download task
     format_selector = get_format_selector(url, format_quality)
     await download_task.kiq(
         url=url,

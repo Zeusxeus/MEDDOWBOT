@@ -48,30 +48,27 @@ class ProxyPool:
 
     async def get_proxy_for_url(self, url: str) -> Proxy | None:
         """
-        Get a proxy for a specific URL based on settings and rotation strategy.
-        Returns None if proxies are disabled or platform is excluded.
+        Get a proxy ONLY for YouTube URLs. 
+        All other platforms use direct connection.
         """
         if not settings.proxy.enabled:
             return None
 
         domain = urlparse(url).netloc.lower()
-
-        # Check exclusion list
-        if any(platform in domain for platform in settings.proxy.no_proxy_platforms):
-            log.debug("proxy_skipped_excluded_platform", domain=domain)
+        is_youtube = "youtube.com" in domain or "youtu.be" in domain
+        
+        if not is_youtube:
+            # Skip proxy for non-youtube platforms
             return None
-
-        # Check if proxy is forced for this platform
-        is_forced = any(platform in domain for platform in settings.proxy.force_proxy_platforms)
 
         proxy = await self._select_proxy()
 
-        if not proxy and is_forced:
-            log.warning("proxy_forced_but_none_available", domain=domain)
+        if not proxy:
+            log.warning("proxy_forced_for_youtube_but_none_available")
+            return None
 
         if proxy:
-            # Update last_used_at and total_uses immediately to avoid same proxy being picked
-            # multiple times in rapid succession for round_robin/least_used
+            # Update last_used_at and total_uses immediately
             async with get_db() as session:
                 await session.execute(
                     update(Proxy)
@@ -81,7 +78,7 @@ class ProxyPool:
                         total_uses=Proxy.total_uses + 1,
                     )
                 )
-            log.debug("proxy_selected", proxy_id=proxy.id, domain=domain)
+            log.debug("proxy_selected_for_youtube", proxy_id=proxy.id)
 
         return proxy
 

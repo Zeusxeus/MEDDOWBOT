@@ -29,16 +29,10 @@ def get_settings_text(settings: UserSettings) -> str:
     progress = "ON" if settings.show_progress else "OFF"
     up_type = "Video Media" if settings.upload_as_video else "Document"
     
-    # Handle 'p' suffix correctly
-    q_display = settings.format_quality
-    if q_display not in ["audio", "best"]:
-        q_display = f"{q_display}p"
-    
     return (
         "┌─────────────────────────────────────┐\n"
         "│ ⚙️ <b>Your Settings</b>                    │\n"
         "│                                     │\n"
-        f"│ 📊 Quality: <b>{q_display}</b>                │\n"
         f"│ 📤 Upload as: <b>{up_type}</b>            │\n"
         f"│ 🗜️ Auto-compress: <b>{compress}</b>               │\n"
         f"│ 📶 Progress updates: <b>{progress}</b>             │\n"
@@ -55,14 +49,13 @@ def build_settings_keyboard(settings: UserSettings) -> types.InlineKeyboardMarku
     progress_status = "✅ ON" if settings.show_progress else "❌ OFF"
     upload_status = "🎬 Video" if settings.upload_as_video else "📄 File"
     
-    builder.button(text="📊 Quality ▶", callback_data="settings:quality_menu")
     builder.button(text=f"📤 Mode: {upload_status}", callback_data="settings:toggle:upload_as_video")
     builder.button(text=f"🗜️ Compress: {compress_status}", callback_data="settings:toggle:compression_enabled")
     builder.button(text=f"📶 Progress: {progress_status}", callback_data="settings:toggle:show_progress")
     builder.button(text="📋 History", callback_data="history:list")
     builder.button(text="❌ Close", callback_data="settings:close")
     
-    builder.adjust(1, 1, 2, 2)
+    builder.adjust(1, 2, 2)
     return builder.as_markup()
 
 
