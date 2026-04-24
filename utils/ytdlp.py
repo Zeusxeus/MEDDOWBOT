@@ -178,6 +178,13 @@ def build_ydl_opts(
 
     # Find node path
     node_path = shutil.which("node") or "/usr/bin/node"
+    if not os.path.exists(node_path):
+        node_path = None
+    
+    if node_path:
+        log.debug("js_runtime_found", path=node_path)
+    else:
+        log.warning("js_runtime_not_found")
 
     opts: dict[str, Any] = {
         "quiet": True,
@@ -189,12 +196,16 @@ def build_ydl_opts(
         "http_chunk_size": 10485760,  # 10MB
         "proxy": proxy_url,
         "cookiefile": cookie_file,
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
+        # MODERN BYPASS STRATEGY
+        "impersonate": "chrome",  # New feature in recent yt-dlp
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "check_formats": False,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["web", "mweb"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
     }
     
     if node_path:
