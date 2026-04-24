@@ -99,11 +99,13 @@ def get_format_selector(url: str, quality: str) -> str:
             return "bestvideo+bestaudio/best"
         return f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
 
-    # For other platforms, try to respect height but be less strict about format merging
+    # For other platforms (TikTok, Reddit, Twitter), be MUCH more permissive.
+    # Often they only have one 'best' format, so [height<=...] can cause "format not found"
     if quality == "best":
-        return "bestvideo+bestaudio/best[ext=mp4]/best"
+        return "best"
     
-    return f"bestvideo[height<={height}]+bestaudio/best[height<={height}][ext=mp4]/best[ext=mp4]/best"
+    # Try to respect height, but fallback to best if that fails
+    return f"best[height<={height}]/best"
 
 
 def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | None:
@@ -194,16 +196,22 @@ def build_ydl_opts(
         log.debug("js_runtime_found", path=node_path)
 
     # Multi-client strategy to bypass bot detection
-    # Android doesn't support cookies, so skip it if cookies are present
-    clients = ["android", "web", "mweb"] if not cookie_file else ["web", "mweb"]
+    clients = ["android", "web", "mweb"]
+    if cookie_file:
+        clients = ["web", "mweb"]
     
+    # Reddit special strategy
+    if "reddit.com" in url.lower() or "redd.it" in url.lower():
+        # Reddit often blocks VPS IPs. Use guest client or different player
+        clients = ["web", "mweb"]
+
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
         "extract_flat": False,
-        "socket_timeout": 30,
-        "retries": 3,
-        "fragment_retries": 3,
+        "socket_timeout": 60, # Increased timeout
+        "retries": 5,
+        "fragment_retries": 15, # Aggressive fragment retries for Reddit
         "http_chunk_size": 10485760,  # 10MB
         "proxy": proxy_url,
         "cookiefile": cookie_file,

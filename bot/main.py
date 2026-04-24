@@ -121,6 +121,9 @@ async def startup(app: web.Application) -> None:
     settings.disk.temp_path.mkdir(parents=True, exist_ok=True)
     settings.cookies.cookies_dir.mkdir(parents=True, exist_ok=True)
     
+    # Ensure cookie files are registered in DB
+    await cookie_manager.discover_local_cookies()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await init_redis()

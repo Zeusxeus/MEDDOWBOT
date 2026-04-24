@@ -35,6 +35,33 @@ class CookieManager:
             path = settings.cookies.cookies_dir / platform
             path.mkdir(parents=True, exist_ok=True)
 
+    async def discover_local_cookies(self) -> None:
+        """Scan cookies directory and register files in DB if missing."""
+        log.info("starting_cookie_discovery")
+        async with get_db() as session:
+            for platform in settings.cookies.cookie_platforms:
+                plat_dir = settings.cookies.cookies_dir / platform
+                if not plat_dir.exists():
+                    continue
+
+                for f in plat_dir.glob("*.txt"):
+                    # Check if already in DB
+                    stmt = select(CookieFile).where(CookieFile.platform == platform, CookieFile.filename == f.name)
+                    result = await session.execute(stmt)
+                    if not result.scalar_one_or_none():
+                        log.info("registering_found_cookie", platform=platform, file=f.name)
+                        new_cookie = CookieFile(
+                            platform=platform,
+                            filename=f.name,
+                            is_active=True,
+                            is_valid=True,
+                            last_validated_at=datetime.datetime.now(datetime.timezone.utc),
+                        )
+                        # Deactivate others for this platform first
+                        await crud.deactivate_all_cookies(session, platform)
+                        session.add(new_cookie)
+            await session.commit()
+
     async def get_cookie_file(self, url: str) -> str | None:
         """Get the absolute path to the active cookie file for a given URL."""
         if not settings.cookies.enabled:
