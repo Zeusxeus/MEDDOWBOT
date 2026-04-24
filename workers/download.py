@@ -108,10 +108,25 @@ async def download_task(
         )
 
         # 7. Check if needs compression
-        max_bytes = settings.ffmpeg.max_size_mb * 1024 * 1024
+        # Get user's custom limit from DB
+        async with get_db() as session:
+            from database.models import User
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            
+            user_uuid = uuid.UUID(user_id_str)
+            stmt = select(User).where(User.id == user_uuid).options(selectinload(User.settings))
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+            
+            user_settings = user.settings if user else None
+            user_limit_mb = user_settings.max_file_size if user_settings else settings.ffmpeg.max_size_mb
+            as_video = user_settings.upload_as_video if user_settings else False
+
+        max_bytes = user_limit_mb * 1024 * 1024
         file_to_upload = download_result.file_path
         
-        log.info("checking_compression", path=str(file_to_upload), size=file_to_upload.stat().st_size, limit=max_bytes)
+        log.info("checking_compression", path=str(file_to_upload), size=file_to_upload.stat().st_size, limit_mb=user_limit_mb)
 
         if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
             # 8. If compression needed
@@ -141,21 +156,6 @@ async def download_task(
         await notify_user(
             chat_id=chat_id, message_id=message_id, text="📤 <b>Uploading to Telegram...</b>"
         )
-
-        # 10. upload_file()
-        async with get_db() as session:
-            from database.models import User
-            from sqlalchemy import select
-            from sqlalchemy.orm import selectinload
-            
-            # Fetch user by database UUID and load settings
-            user_uuid = uuid.UUID(user_id_str)
-            stmt = select(User).where(User.id == user_uuid).options(selectinload(User.settings))
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-            
-            user_settings = user.settings if user else None
-            as_video = user_settings.upload_as_video if user_settings else False
 
         file_id = await upload_file(
             chat_id=chat_id,

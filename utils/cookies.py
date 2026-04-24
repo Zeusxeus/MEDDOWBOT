@@ -200,7 +200,14 @@ class CookieManager:
         return d[4:] if d.startswith("www.") else d
 
     def _platform_key(self, domain: str) -> str:
-        m = {"youtube.com": "youtube", "youtu.be": "youtube", "tiktok.com": "tiktok", "instagram.com": "instagram"}
+        m = {
+            "youtube.com": "youtube", "youtu.be": "youtube",
+            "tiktok.com": "tiktok",
+            "instagram.com": "instagram",
+            "reddit.com": "reddit", "redd.it": "reddit",
+            "twitter.com": "twitter", "x.com": "twitter",
+            "facebook.com": "facebook", "fb.watch": "facebook",
+        }
         return m.get(domain, "generic")
 
     def _get_test_url(self, platform: str) -> str | None:
