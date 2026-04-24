@@ -155,6 +155,9 @@ class UserSettings(Base):
     # Max file size in MB
     max_file_size: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
 
+    # Whether to upload videos as video media or documents
+    upload_as_video: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

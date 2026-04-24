@@ -27,12 +27,14 @@ def get_settings_text(settings: UserSettings) -> str:
     """Generate the settings panel text."""
     compress = "ON" if settings.compression_enabled else "OFF"
     progress = "ON" if settings.show_progress else "OFF"
+    up_type = "Video Media" if settings.upload_as_video else "Document"
     
     return (
         "┌─────────────────────────────────────┐\n"
         "│ ⚙️ <b>Your Settings</b>                    │\n"
         "│                                     │\n"
         f"│ 📊 Quality: <b>{settings.format_quality}p</b>                │\n"
+        f"│ 📤 Upload as: <b>{up_type}</b>            │\n"
         f"│ 🗜️ Auto-compress: <b>{compress}</b>               │\n"
         f"│ 📶 Progress updates: <b>{progress}</b>             │\n"
         f"│ 📏 Max file size: <b>{settings.max_file_size}MB</b>              │\n"
@@ -46,14 +48,16 @@ def build_settings_keyboard(settings: UserSettings) -> types.InlineKeyboardMarku
     
     compress_status = "✅ ON" if settings.compression_enabled else "❌ OFF"
     progress_status = "✅ ON" if settings.show_progress else "❌ OFF"
+    upload_status = "🎬 Video" if settings.upload_as_video else "📄 File"
     
     builder.button(text="📊 Quality ▶", callback_data="settings:quality_menu")
+    builder.button(text=f"📤 Mode: {upload_status}", callback_data="settings:toggle:upload_as_video")
     builder.button(text=f"🗜️ Compress: {compress_status}", callback_data="settings:toggle:compression_enabled")
     builder.button(text=f"📶 Progress: {progress_status}", callback_data="settings:toggle:show_progress")
     builder.button(text="📋 History", callback_data="history:list")
     builder.button(text="❌ Close", callback_data="settings:close")
     
-    builder.adjust(1, 2, 2)
+    builder.adjust(1, 1, 2, 2)
     return builder.as_markup()
 
 
@@ -83,7 +87,7 @@ async def handle_settings(message: Message, db_user: User) -> None:
 
 @router.callback_query(lambda c: c.data == "settings:main")
 async def handle_main_settings(callback: CallbackQuery, db_user: User) -> None:
-    """Return to main settings menu."""
+    """Return to main admin menu."""
     if not db_user.settings or not isinstance(callback.message, Message):
         return
 

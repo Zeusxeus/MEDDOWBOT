@@ -139,10 +139,18 @@ async def download_task(
         )
 
         # 10. upload_file()
+        async with get_db() as session:
+            user = await crud.get_user_by_telegram_id(session, int(user_id_str))
+            user_settings = user.settings if user else None
+            as_video = user_settings.upload_as_video if user_settings else False
+
         file_id = await upload_file(
             chat_id=chat_id,
             file_path=file_to_upload,
             caption=f"✅ <b>{download_result.filename}</b>",
+            as_video=as_video,
+            thumbnail=Path(download_result.thumbnail_url) if download_result.thumbnail_url and Path(download_result.thumbnail_url).exists() else None,
+            duration=download_result.duration,
         )
 
         # 11. Success

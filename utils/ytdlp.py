@@ -88,7 +88,8 @@ def get_format_selector(url: str, quality: str) -> str:
 
     url_lower = url.lower()
     if "youtube.com" in url_lower or "youtu.be" in url_lower:
-        return "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        # Avoid forcing mp4 extension too strictly to allow more formats
+        return "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 
     if any(
         p in url_lower for p in ["tiktok.com", "instagram.com", "twitter.com", "x.com", "reddit.com"]
@@ -123,36 +124,34 @@ def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | 
         return None
 
     try:
-        start_idx = quality_order.index(quality)
+        height = int(quality)
     except ValueError:
-        start_idx = 1
+        height = 720
 
-    for q in quality_order[start_idx:]:
-        height = int(q)
-        candidates = []
-        for f in formats:
-            if f.vcodec == "none":
+    candidates = []
+    for f in formats:
+        if f.vcodec == "none":
+            continue
+        
+        f_height = 0
+        if f.resolution and "x" in f.resolution:
+            try:
+                f_height = int(f.resolution.split("x")[1])
+            except (ValueError, IndexError):
                 continue
-            
-            f_height = 0
-            if f.resolution and "x" in f.resolution:
-                try:
-                    f_height = int(f.resolution.split("x")[1])
-                except (ValueError, IndexError):
-                    continue
-            
-            if f_height <= height and (f.filesize is None or f.filesize <= max_bytes):
-                candidates.append(f)
+        
+        if f_height <= height and (f.filesize is None or f.filesize <= max_bytes):
+            candidates.append(f)
 
-        if candidates:
-            return sorted(
-                candidates,
-                key=lambda f: (
-                    int(f.resolution.split("x")[1]) if f.resolution and "x" in f.resolution else 0,
-                    f.filesize or 0,
-                ),
-                reverse=True,
-            )[0]
+    if candidates:
+        return sorted(
+            candidates,
+            key=lambda f: (
+                int(f.resolution.split("x")[1]) if f.resolution and "x" in f.resolution else 0,
+                f.filesize or 0,
+            ),
+            reverse=True,
+        )[0]
 
     return None
 
@@ -183,8 +182,6 @@ def build_ydl_opts(
     
     if node_path:
         log.debug("js_runtime_found", path=node_path)
-    else:
-        log.warning("js_runtime_not_found")
 
     opts: dict[str, Any] = {
         "quiet": True,
@@ -196,12 +193,14 @@ def build_ydl_opts(
         "http_chunk_size": 10485760,  # 10MB
         "proxy": proxy_url,
         "cookiefile": cookie_file,
-        "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        # MODERN BYPASS STRATEGY
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "check_formats": False,
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios"],
-                "player_skip": ["webpage", "configs"],
+                # Multi-client strategy to bypass bot detection without requiring PO token on all formats
+                "player_client": ["android", "web", "mweb"],
+                "player_skip": ["configs"],
             }
         },
     }

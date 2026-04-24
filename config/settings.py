@@ -93,8 +93,7 @@ class ObservabilitySettings(BaseModel):
 class Settings(BaseSettings):
     """
     ULTRA-ROBUST FLAT CONFIG
-    Environment variables are flat. Python objects are provided via @property.
-    This prevents Pydantic from ever attempting JSON parsing on environment variables.
+    Explicitly populate all sub-model fields to ensure logic in other files works.
     """
     model_config = SettingsConfigDict(
         env_prefix="MEDDOW_",
@@ -134,11 +133,18 @@ class Settings(BaseSettings):
 
     proxy_enabled: bool = True
     proxy_rotation_strategy: str = "round_robin"
+    proxy_force_platforms: str = "youtube.com,youtu.be"
+    
     cookies_enabled: bool = True
+    cookies_dir: str = "data/cookies"
+    cookies_platforms: str = "youtube,instagram,twitter,tiktok,reddit,facebook"
+
+    reddit_enabled: bool = False
+    reddit_user_agent: str = "MEDDOWBOT/1.0.0"
+    
     obs_log_level: str = "INFO"
     obs_metrics_port: int = 9090
 
-    # Dynamic Properties to satisfy existing bot code
     @property
     def bot(self) -> BotSettings:
         ids = [int(x.strip()) for x in self.bot_admin_ids.split(",") if x.strip()] if self.bot_admin_ids else []
@@ -174,15 +180,17 @@ class Settings(BaseSettings):
 
     @property
     def proxy(self) -> ProxySettings:
-        return ProxySettings(enabled=self.proxy_enabled, rotation_strategy=self.proxy_rotation_strategy)
+        force = [x.strip() for x in self.proxy_force_platforms.split(",") if x.strip()]
+        return ProxySettings(enabled=self.proxy_enabled, rotation_strategy=self.proxy_rotation_strategy, force_proxy_platforms=force)
 
     @property
     def cookies(self) -> CookieSettings:
-        return CookieSettings(enabled=self.cookies_enabled)
+        plat = [x.strip() for x in self.cookies_platforms.split(",") if x.strip()]
+        return CookieSettings(enabled=self.cookies_enabled, cookies_dir=pathlib.Path(self.cookies_dir), cookie_platforms=plat)
 
     @property
     def reddit(self) -> RedditSettings:
-        return RedditSettings()
+        return RedditSettings(enabled=self.reddit_enabled, user_agent=self.reddit_user_agent)
 
     @property
     def obs(self) -> ObservabilitySettings:
@@ -193,11 +201,8 @@ settings: Settings
 
 try:
     import os
-    # Scrub system environment collisions before Pydantic sees them
-    for k in ["PROXY", "PROXY_POOL", "MB_PROXY"]:
-        if k in os.environ:
-            del os.environ[k]
-            
+    for k in ["PROXY", "PROXY_POOL", "MB_PROXY", "BOT_CONF_DOWNLOADER_PROXIES"]:
+        if k in os.environ: del os.environ[k]
     settings = Settings()  # type: ignore
 except Exception as e:
     if os.environ.get("MOCK_SETTINGS") == "1":
