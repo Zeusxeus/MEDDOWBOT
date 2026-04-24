@@ -183,11 +183,8 @@ def build_ydl_opts(
     is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
     actual_cookie_file = cookie_file if is_youtube else None
     
-    # AGGRESSIVE CLIENT STRATEGY
-    clients = ["ios", "android", "web", "mweb"]
-    if actual_cookie_file:
-        # Web clients are usually better with cookies
-        clients = ["web", "mweb", "ios"]
+    # STRATEGY: Prioritize web and android, skip mweb/ios which require PO tokens more strictly
+    clients = ["web", "android"]
 
     opts: dict[str, Any] = {
         "quiet": True,
@@ -196,7 +193,7 @@ def build_ydl_opts(
         "socket_timeout": 60,
         "retries": 5,
         "fragment_retries": 15,
-        "http_chunk_size": 10485760,
+        "http_chunk_size": 10485760,  # 10MB
         "proxy": proxy_url,
         "cookiefile": actual_cookie_file,
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -206,9 +203,10 @@ def build_ydl_opts(
                 "player_client": clients,
                 "player_skip": ["configs"],
                 "include_dash_manifest": True,
+                "include_hls_manifest": True,
             }
         },
-        "prefer_free_formats": False,
+        "format": "bestvideo+bestaudio/best",
     }
     
     if node_path:
@@ -232,14 +230,28 @@ async def fetch_metadata(url: str, user_format_quality: str) -> PreflightResult:
     opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, "metadata")
     opts["skip_download"] = True
 
-    def _extract() -> dict[str, Any]:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=False)  # type: ignore
+    async def _try_extract(current_opts: dict[str, Any]) -> dict[str, Any]:
+        def __extract() -> dict[str, Any]:
+            with yt_dlp.YoutubeDL(current_opts) as ydl:
+                return ydl.extract_info(url, download=False)  # type: ignore
+        return await asyncio.to_thread(__extract)
 
     try:
-        info = await asyncio.to_thread(_extract)
+        try:
+            info = await _try_extract(opts)
+        except (DownloadError, YtDlpAuthError) as e:
+            # FALLBACK: If cookies are invalid/blocked, try one more time WITHOUT cookies
+            if opts.get("cookiefile"):
+                log.warning("cookie_extraction_failed_trying_without_cookies", url=url)
+                fallback_opts = opts.copy()
+                fallback_opts["cookiefile"] = None
+                info = await _try_extract(fallback_opts)
+            else:
+                raise e
+
         if proxy:
             await proxy_pool.record_proxy_success(proxy.id, 100)
+            
     except DownloadError as e:
         if proxy:
             await proxy_pool.record_proxy_failure(proxy.id)
@@ -323,14 +335,28 @@ async def download_media(
             "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         })
 
-    def _download() -> dict[str, Any]:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            return ydl.extract_info(url, download=True)
+    async def _try_download(current_opts: dict[str, Any]) -> dict[str, Any]:
+        def __download() -> dict[str, Any]:
+            with yt_dlp.YoutubeDL(current_opts) as ydl:
+                return ydl.extract_info(url, download=True)
+        return await asyncio.to_thread(__download)
 
     try:
-        info = await asyncio.to_thread(_download)
+        try:
+            info = await _try_download(opts)
+        except (DownloadError, YtDlpAuthError) as e:
+            # FALLBACK: If cookies are invalid, try one more time WITHOUT cookies
+            if opts.get("cookiefile"):
+                log.warning("cookie_download_failed_trying_without_cookies", url=url)
+                fallback_opts = opts.copy()
+                fallback_opts["cookiefile"] = None
+                info = await _try_download(fallback_opts)
+            else:
+                raise e
+
         if proxy:
             await proxy_pool.record_proxy_success(proxy.id, 100)
+            
     except DownloadError as e:
         if proxy: await proxy_pool.record_proxy_failure(proxy.id)
         msg = str(e)
