@@ -86,17 +86,24 @@ def get_format_selector(url: str, quality: str) -> str:
     if quality == "audio":
         return "bestaudio/best"
 
+    height = 720
+    try:
+        if quality != "best":
+            height = int(quality)
+    except ValueError:
+        pass
+
     url_lower = url.lower()
     if "youtube.com" in url_lower or "youtu.be" in url_lower:
-        # Avoid forcing mp4 extension too strictly to allow more formats
-        return "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+        if quality == "best":
+            return "bestvideo+bestaudio/best"
+        return f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
 
-    if any(
-        p in url_lower for p in ["tiktok.com", "instagram.com", "twitter.com", "x.com", "reddit.com"]
-    ):
-        return "best[ext=mp4]/best"
-
-    return "best[ext=mp4]/best"
+    # For other platforms, try to respect height but be less strict about format merging
+    if quality == "best":
+        return "bestvideo+bestaudio/best[ext=mp4]/best"
+    
+    return f"bestvideo[height<={height}]+bestaudio/best[height<={height}][ext=mp4]/best[ext=mp4]/best"
 
 
 def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | None:
@@ -123,10 +130,13 @@ def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | 
     if quality not in quality_order:
         return None
 
-    try:
-        height = int(quality)
-    except ValueError:
-        height = 720
+    if quality == "best":
+        height = 4320  # Allow up to 4K/8K
+    else:
+        try:
+            height = int(quality)
+        except ValueError:
+            height = 720
 
     candidates = []
     for f in formats:

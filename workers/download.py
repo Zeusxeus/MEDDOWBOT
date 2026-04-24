@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -14,7 +15,7 @@ from database import crud
 from database.models import JobStatus
 from database.session import get_db
 from task_queue.broker import broker
-from utils.bot import get_bot
+from utils.bot import get_bot, notify_user
 from utils.ffmpeg import compress_video, needs_compression
 from utils.notify import notify_admins
 from utils.upload import upload_file
@@ -68,8 +69,8 @@ async def download_task(
 
     progress_task = None
     try:
-        # 3. Edit message: "⏬ Downloading..."
-        await bot.edit_message_text(
+        # 3. Update status: "⏬ Downloading..."
+        message_id = await notify_user(
             chat_id=chat_id, message_id=message_id, text="⏬ <b>Downloading...</b> (0%)"
         )
 
@@ -85,7 +86,6 @@ async def download_task(
                 speed = d.get("_speed_str", "N/A")
                 eta = d.get("_eta_str", "N/A")
 
-                # We need to run this async, but the callback is sync called from thread
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
@@ -110,9 +110,12 @@ async def download_task(
         # 7. Check if needs compression
         max_bytes = settings.ffmpeg.max_size_mb * 1024 * 1024
         file_to_upload = download_result.file_path
+        
+        log.info("checking_compression", path=str(file_to_upload), size=file_to_upload.stat().st_size, limit=max_bytes)
 
         if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
             # 8. If compression needed
+            log.info("compression_triggered", path=str(file_to_upload))
             async with get_db() as session:
                 await crud.update_job_status(
                     session,
@@ -121,7 +124,7 @@ async def download_task(
                     heartbeat_at=datetime.now(UTC),
                 )
 
-            await bot.edit_message_text(
+            await notify_user(
                 chat_id=chat_id,
                 message_id=message_id,
                 text="⚙️ <b>Compressing video...</b> (this may take a few minutes)",
@@ -132,9 +135,10 @@ async def download_task(
                 progress_task.cancel()
 
             file_to_upload = await compress_video(file_to_upload, settings.ffmpeg.target_mb)
+            log.info("compression_finished", new_path=str(file_to_upload), new_size=file_to_upload.stat().st_size)
 
         # 9. Edit message: "📤 Uploading..."
-        await bot.edit_message_text(
+        await notify_user(
             chat_id=chat_id, message_id=message_id, text="📤 <b>Uploading to Telegram...</b>"
         )
 
@@ -143,7 +147,6 @@ async def download_task(
             from database.models import User
             from sqlalchemy import select
             from sqlalchemy.orm import selectinload
-            import uuid
             
             # Fetch user by database UUID and load settings
             user_uuid = uuid.UUID(user_id_str)
@@ -169,52 +172,36 @@ async def download_task(
                 session,
                 job_id,
                 JobStatus.DONE,
-                heartbeat_at=datetime.now(UTC),
                 telegram_file_id=file_id,
-                size_bytes=file_to_upload.stat().st_size,
                 filename=download_result.filename,
-            )
-            # Update user stats
-            await crud.increment_user_stats(
-                session,
-                UUID(user_id_str),
-                file_to_upload.stat().st_size,
+                size_bytes=download_result.size_bytes,
+                platform=download_result.platform,
             )
 
-        # 12. Cleanup
-        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        await notify_user(chat_id=chat_id, message_id=message_id, text="✅ <b>Download complete!</b>")
 
     except Exception as e:
         log.exception("download_task_failed", job_id=job_id_str, error=str(e))
-
         async with get_db() as session:
             await crud.update_job_status(
                 session,
                 job_id,
                 JobStatus.FAILED,
-                error_message=str(e)[:500],
+                error_message=str(e),
+                error_type=type(e).__name__,
             )
 
-        await notify_admins(
-            bot,
-            f"❌ <b>Job Failed!</b>\nJob ID: <code>{job_id_str}</code>\nURL: {url}\nError: <code>{str(e)[:200]}</code>",
+        await notify_user(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"❌ <b>Download failed</b>\n\nURL: <code>{url}</code>\nError: <code>{str(e)[:200]}</code>",
         )
 
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"❌ <b>Download failed</b>\n\nURL: {url}\nError: <code>{str(e)[:200]}</code>",
-            )
-        except Exception:
-            log.error("failed_to_send_error_message", chat_id=chat_id)
-
     finally:
-        if progress_task and not progress_task.done():
+        if progress_task:
             progress_task.cancel()
-
-        # Cleanup temp files
+        # 12. Cleanup temp directory
         try:
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-        except Exception:
-            log.warning("cleanup_failed", path=str(tmp_dir))
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception as e:
+            log.error("cleanup_failed", path=str(tmp_dir), error=str(e))

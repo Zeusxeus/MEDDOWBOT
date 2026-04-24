@@ -12,7 +12,7 @@ from database import crud
 from database.models import JobStatus
 from database.session import get_db
 from task_queue.broker import broker
-from utils.bot import get_bot
+from utils.bot import get_bot, notify_user
 from utils.ytdlp import (
     YtDlpAuthError,
     YtDlpExtractError,
@@ -80,7 +80,7 @@ async def preflight_task(
         await _fail_job(
             job_id, "Authentication required. Admin needs to set up cookies.", "YtDlpAuthError"
         )
-        await _notify_user(
+        await notify_user(
             chat_id,
             message_id,
             "❌ This video requires authentication. Please notify the administrator to update cookies.",
@@ -89,12 +89,12 @@ async def preflight_task(
     except YtDlpExtractError as e:
         log.error("preflight_extract_error", job_id=job_id_str, error=str(e))
         await _fail_job(job_id, f"Failed to extract metadata: {e}", "YtDlpExtractError")
-        await _notify_user(chat_id, message_id, f"❌ Could not get video info: {e}")
+        await notify_user(chat_id, message_id, f"❌ Could not get video info: {e}")
         return
     except Exception as e:
         log.exception("preflight_unexpected_error", job_id=job_id_str)
         await _fail_job(job_id, str(e), "UnexpectedError")
-        await _notify_user(chat_id, message_id, "❌ An unexpected error occurred.")
+        await notify_user(chat_id, message_id, "❌ An unexpected error occurred.")
         return
 
     # 3. Update job in DB
@@ -137,7 +137,7 @@ async def preflight_task(
             ]
         )
 
-        await _notify_user(
+        await notify_user(
             chat_id,
             message_id,
             f"⚠️ <b>Large File Warning</b>\n\n"
@@ -148,11 +148,8 @@ async def preflight_task(
         )
         return
 
-    # 6. Normal flow: notify and chain
-    await _notify_user(chat_id, message_id, f"⬇️ Downloading: <b>{preflight.title}</b>...")
-
+    # 6. Success -> chain to download task
     format_selector = get_format_selector(url, format_quality)
-
     await download_task.kiq(
         url=url,
         user_id_str=user_id_str,
@@ -165,29 +162,24 @@ async def preflight_task(
 
 
 async def _deliver_cached_result(
-    cached_job, current_job_id: uuid.UUID, chat_id: int, message_id: int
+    cached_job: any, current_job_id: uuid.UUID, chat_id: int, message_id: int
 ) -> None:
-    """Send a previously uploaded file instantly."""
+    """Send existing Telegram file_id to user."""
     bot = get_bot()
 
-    # 1. Notify user
-    await bot.edit_message_text(
+    # Send the existing file_id
+    await bot.send_document(
         chat_id=chat_id,
-        message_id=message_id,
-        text="⚡ <b>Instant Delivery!</b> Found this in my cache. Sending...",
+        document=cached_job.telegram_file_id,
+        caption=f"✅ <b>(Cached) {cached_job.filename}</b>",
     )
 
-    # 2. Send file via file_id
-    try:
-        await bot.send_video(
-            chat_id=chat_id,
-            video=cached_job.telegram_file_id,
-            caption=f"✅ {cached_job.filename or 'Downloaded video'}\n(Delivered from cache)",
-        )
-    except Exception as e:
-        log.error("cache_delivery_failed", job_id=str(current_job_id), error=str(e))
-        await bot.send_message(chat_id, "❌ Failed to deliver from cache. Retrying download...")
-        return
+    # Optional: cleanup the original request message
+    if message_id > 0:
+        try:
+            await bot.delete_message(chat_id, message_id)
+        except Exception:
+            pass
 
     # 3. Update current job as DONE
     async with get_db() as session:
@@ -208,15 +200,3 @@ async def _fail_job(job_id: uuid.UUID, error: str, error_type: str) -> None:
         await crud.update_job_status(
             session, job_id, JobStatus.FAILED, error_message=error, error_type=error_type
         )
-
-
-async def _notify_user(chat_id: int, message_id: int, text: str, reply_markup=None) -> None:
-    """Edit message or send new one to notify user."""
-    bot = get_bot()
-    try:
-        await bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup
-        )
-    except Exception:
-        # Fallback if message can't be edited (e.g. too old or deleted)
-        await bot.send_message(chat_id, text, reply_markup=reply_markup)

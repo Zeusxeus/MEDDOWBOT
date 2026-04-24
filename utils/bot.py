@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+import sys
+import pathlib
+from typing import Any, Optional
 
-from aiogram import Bot
+from aiogram import Bot, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 
 from config.settings import settings
 
@@ -22,8 +25,6 @@ def get_bot() -> Bot:
         return _worker_bot
 
     try:
-        import sys
-        import pathlib
         # Ensure project root is in path for imports
         root = str(pathlib.Path(__file__).parent.parent)
         if root not in sys.path:
@@ -45,3 +46,43 @@ def get_bot() -> Bot:
         
     _worker_bot = Bot(token=settings.bot.token, **bot_kwargs)
     return _worker_bot
+
+
+async def notify_user(
+    chat_id: int, 
+    message_id: int, 
+    text: str, 
+    reply_markup: Optional[types.InlineKeyboardMarkup] = None
+) -> int:
+    """
+    Edit an existing message or send a new one if message_id is 0 or editing fails.
+    Returns the message_id of the sent/edited message.
+    """
+    bot = get_bot()
+    
+    if message_id > 0:
+        try:
+            msg = await bot.edit_message_text(
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return msg.message_id if isinstance(msg, types.Message) else message_id
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                return message_id
+            # If message to edit not found or other bad request, fall back to sending new
+            pass
+        except Exception:
+            pass
+
+    # Send new message as fallback
+    msg = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode="HTML"
+    )
+    return msg.message_id
