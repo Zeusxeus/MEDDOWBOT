@@ -128,7 +128,7 @@ async def download_task(
         
         log.info("checking_compression", path=str(file_to_upload), size=file_to_upload.stat().st_size, limit_mb=user_limit_mb)
 
-        if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
+        if needs_compression(file_to_upload, max_bytes):
             # 8. If compression needed
             log.info("compression_triggered", path=str(file_to_upload))
             async with get_db() as session:

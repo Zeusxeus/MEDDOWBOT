@@ -194,8 +194,12 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         "/dev/null",
     ]
 
-    # Pass 2
-    output_path = path.with_suffix(f".compressed{path.suffix}")
+    output_path = path.with_suffix(".mp4")
+    if output_path == path:
+        output_path = path.with_name(f"compressed_{path.name}")
+        if not output_path.name.endswith(".mp4"):
+            output_path = output_path.with_suffix(".mp4")
+            
     pass2_cmd = [
         settings.ffmpeg.binary_path,
         "-y",
@@ -210,7 +214,7 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         "-c:a",
         "aac",
         "-b:a",
-        "128000",
+        "128k",
         str(output_path),
     ]
 

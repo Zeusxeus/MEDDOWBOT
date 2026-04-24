@@ -194,22 +194,22 @@ def build_ydl_opts(
         "socket_timeout": 60,
         "retries": 5,
         "fragment_retries": 15,
-        "http_chunk_size": 10485760,  # 10MB
+        "http_chunk_size": 10485760,
         "proxy": proxy_url,
         "cookiefile": actual_cookie_file,
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "check_formats": False,
         "extractor_args": {
             "youtube": {
-                "player_client": clients,
+                "player_client": ["tv", "web", "android", "mweb"],
                 "player_skip": ["configs"],
                 "include_dash_manifest": True,
                 "include_hls_manifest": True,
             }
         },
         "format": "bestvideo+bestaudio/best",
-        "youtube_include_dash_manifest": True,
-        "youtube_include_hls_manifest": True,
+        "allow_unplayable_formats": True,
+        "ignore_no_formats_error": True,
     }
     
     if node_path:
