@@ -183,6 +183,10 @@ def build_ydl_opts(
     if node_path:
         log.debug("js_runtime_found", path=node_path)
 
+    # Multi-client strategy to bypass bot detection
+    # Android doesn't support cookies, so skip it if cookies are present
+    clients = ["android", "web", "mweb"] if not cookie_file else ["web", "mweb"]
+    
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
@@ -198,8 +202,7 @@ def build_ydl_opts(
         "check_formats": False,
         "extractor_args": {
             "youtube": {
-                # Multi-client strategy to bypass bot detection without requiring PO token on all formats
-                "player_client": ["android", "web", "mweb"],
+                "player_client": clients,
                 "player_skip": ["configs"],
             }
         },

@@ -140,7 +140,17 @@ async def download_task(
 
         # 10. upload_file()
         async with get_db() as session:
-            user = await crud.get_user_by_telegram_id(session, int(user_id_str))
+            from database.models import User
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            import uuid
+            
+            # Fetch user by database UUID and load settings
+            user_uuid = uuid.UUID(user_id_str)
+            stmt = select(User).where(User.id == user_uuid).options(selectinload(User.settings))
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+            
             user_settings = user.settings if user else None
             as_video = user_settings.upload_as_video if user_settings else False
 
