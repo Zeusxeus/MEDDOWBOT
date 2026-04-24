@@ -17,10 +17,10 @@ class FFmpegError(Exception):
 
 async def detect_hw_encoder() -> str | None:
     """
-    Detect available hardware encoder.
+    Detect available hardware encoder for HEVC (H.265).
 
     Returns:
-        "h264_nvenc", "h264_vaapi", or None.
+        "hevc_nvenc", "hevc_vaapi", or None.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -32,10 +32,10 @@ async def detect_hw_encoder() -> str | None:
         stdout, _ = await process.communicate()
         output = stdout.decode().lower()
 
-        if "h264_nvenc" in output:
-            return "h264_nvenc"
-        if "h264_vaapi" in output:
-            return "h264_vaapi"
+        if "hevc_nvenc" in output:
+            return "hevc_nvenc"
+        if "hevc_vaapi" in output:
+            return "hevc_vaapi"
     except Exception as e:
         log.warning("failed_to_detect_hw_encoder", error=str(e))
 
@@ -45,15 +45,6 @@ async def detect_hw_encoder() -> str | None:
 async def get_duration(path: Path) -> float:
     """
     Uses ffprobe to get duration in seconds.
-
-    Args:
-        path: Path to the video file.
-
-    Returns:
-        Duration in seconds.
-
-    Raises:
-        FFmpegError: If ffprobe fails.
     """
     cmd = [
         "ffprobe",
@@ -85,34 +76,21 @@ async def get_duration(path: Path) -> float:
 def needs_compression(path: Path, max_bytes: int) -> bool:
     """
     Returns True if file size > max_bytes.
-
-    Args:
-        path: Path to the file.
-        max_bytes: Maximum size in bytes.
     """
     return path.stat().st_size > max_bytes
 
 
 async def hw_encode(path: Path, encoder: str, target_mb: int) -> Path:
     """
-    Implements HW accelerated encoding.
-
-    Args:
-        path: Path to the input video.
-        encoder: The hardware encoder to use.
-        target_mb: Target size in MB.
-
-    Returns:
-        Path to the compressed video.
-
-    Raises:
-        FFmpegError: If encoding fails.
+    Implements HEVC HW accelerated encoding.
     """
     duration = await get_duration(path)
     target_bytes = target_mb * 1024 * 1024
     bitrate = int((target_bytes * 8) / duration * 0.9)
 
-    output_path = path.with_suffix(f".hw{path.suffix}")
+    output_path = path.with_suffix(".mp4")
+    if output_path == path:
+        output_path = path.with_name(f"compressed_{path.name}").with_suffix(".mp4")
 
     cmd = [
         settings.ffmpeg.binary_path,
@@ -134,7 +112,7 @@ async def hw_encode(path: Path, encoder: str, target_mb: int) -> Path:
         str(output_path),
     ]
 
-    log.info("starting_hw_encode", path=str(path), encoder=encoder, target_mb=target_mb)
+    log.info("starting_hevc_hw_encode", path=str(path), encoder=encoder, target_mb=target_mb)
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
@@ -152,17 +130,7 @@ async def hw_encode(path: Path, encoder: str, target_mb: int) -> Path:
 
 async def compress_video(path: Path, target_mb: int) -> Path:
     """
-    Orchestrates compression. Tries HW encoder first, falls back to two-pass libx264.
-
-    Args:
-        path: Path to the input video.
-        target_mb: Target size in MB.
-
-    Returns:
-        Path to the compressed video.
-
-    Raises:
-        FFmpegError: If compression fails.
+    Orchestrates compression using HEVC (H.265).
     """
     encoder = await detect_hw_encoder()
     if encoder:
@@ -171,11 +139,16 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         except FFmpegError as e:
             log.warning("hw_encode_failed_falling_back", error=str(e))
 
-    # Two-pass logic
+    # Fallback to libx265 (HEVC)
     duration = await get_duration(path)
     target_bytes = target_mb * 1024 * 1024
     bitrate = int((target_bytes * 8) / duration * 0.9)
 
+    output_path = path.with_suffix(".mp4")
+    if output_path == path:
+        output_path = path.with_name(f"compressed_{path.name}").with_suffix(".mp4")
+
+    # Two-pass HEVC
     # Pass 1
     pass1_cmd = [
         settings.ffmpeg.binary_path,
@@ -183,34 +156,27 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         "-i",
         str(path),
         "-c:v",
-        "libx264",
+        "libx265",
         "-b:v",
         str(bitrate),
-        "-pass",
-        "1",
+        "-x265-params", "pass=1",
         "-an",
         "-f",
         "null",
         "/dev/null",
     ]
 
-    output_path = path.with_suffix(".mp4")
-    if output_path == path:
-        output_path = path.with_name(f"compressed_{path.name}")
-        if not output_path.name.endswith(".mp4"):
-            output_path = output_path.with_suffix(".mp4")
-            
+    # Pass 2
     pass2_cmd = [
         settings.ffmpeg.binary_path,
         "-y",
         "-i",
         str(path),
         "-c:v",
-        "libx264",
+        "libx265",
         "-b:v",
         str(bitrate),
-        "-pass",
-        "2",
+        "-x265-params", "pass=2",
         "-c:a",
         "aac",
         "-b:a",
@@ -218,7 +184,7 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         str(output_path),
     ]
 
-    log.info("starting_two_pass_compress", path=str(path), target_mb=target_mb)
+    log.info("starting_hevc_two_pass_compress", path=str(path), target_mb=target_mb)
 
     try:
         p1 = await asyncio.create_subprocess_exec(
@@ -226,6 +192,8 @@ async def compress_video(path: Path, target_mb: int) -> Path:
         )
         _, stderr1 = await p1.communicate()
         if p1.returncode != 0:
+            # If libx265 is not available, you might need to install it. 
+            # But we assume the environment has it.
             raise FFmpegError(f"Pass 1 failed: {stderr1.decode()}")
 
         p2 = await asyncio.create_subprocess_exec(
@@ -238,64 +206,6 @@ async def compress_video(path: Path, target_mb: int) -> Path:
 
         return output_path
     finally:
-        # Cleanup ffmpeg2pass files
-        for f in Path(".").glob("ffmpeg2pass-0.*"):
+        # Cleanup x265 pass files
+        for f in Path(".").glob("x265_2pass.log*"):
             f.unlink(missing_ok=True)
-
-
-async def split_video(path: Path, max_mb: int) -> list[Path]:
-    """
-    Splits video if it remains over the limit.
-
-    Args:
-        path: Path to the video file.
-        max_mb: Maximum size of each part in MB.
-
-    Returns:
-        List of Paths to the split parts.
-
-    Raises:
-        FFmpegError: If splitting fails.
-    """
-    duration = await get_duration(path)
-    size = path.stat().st_size
-    num_parts = math.ceil(size / (max_mb * 1024 * 1024))
-
-    if num_parts <= 1:
-        return [path]
-
-    part_duration = duration / num_parts
-    output_pattern = path.with_name(f"{path.stem}_part%03d{path.suffix}")
-
-    cmd = [
-        settings.ffmpeg.binary_path,
-        "-y",
-        "-i",
-        str(path),
-        "-f",
-        "segment",
-        "-segment_time",
-        str(part_duration),
-        "-c",
-        "copy",
-        str(output_pattern),
-    ]
-
-    log.info("splitting_video", path=str(path), num_parts=num_parts)
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await process.communicate()
-
-    if process.returncode != 0:
-        raise FFmpegError(f"Split failed: {stderr.decode()}")
-
-    # Find the created parts
-    parts = sorted(list(path.parent.glob(f"{path.stem}_part*{path.suffix}")))
-    if not parts:
-        log.warning("no_split_parts_found", path=str(path))
-        return [path]
-    return parts

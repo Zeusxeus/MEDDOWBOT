@@ -20,11 +20,12 @@ from utils.ffmpeg import compress_video, needs_compression
 from utils.notify import notify_admins
 from utils.upload import upload_file
 from utils.ytdlp import download_media
+from utils.archiver import create_split_archive
 
 log = structlog.get_logger(__name__)
 
 
-@broker.task(task_name="download", max_retries=3, timeout=600)
+@broker.task(task_name="download", max_retries=3, timeout=1200) # Increased timeout for large files/HEVC
 async def download_task(
     url: str,
     user_id_str: str,
@@ -108,7 +109,7 @@ async def download_task(
         )
 
         # 7. Check if needs compression
-        # Get user's custom limit from DB
+        # Get user's custom limit and toggle from DB
         async with get_db() as session:
             from database.models import User
             from sqlalchemy import select
@@ -122,31 +123,19 @@ async def download_task(
             user_settings = user.settings if user else None
             user_limit_mb = user_settings.max_file_size if user_settings else settings.ffmpeg.max_size_mb
             as_video = user_settings.upload_as_video if user_settings else False
+            compression_enabled = user_settings.compression_enabled if user_settings else True
 
         max_bytes = user_limit_mb * 1024 * 1024
         file_to_upload = download_result.file_path
-        
-        # Determine if we should bypass the 50MB limit
-        # Local Bot API allows up to 2GB (2000MB)
-        is_large_file = file_to_upload.stat().st_size > (2000 * 1024 * 1024)
         
         log.info("checking_compression", 
                  path=str(file_to_upload), 
                  size=file_to_upload.stat().st_size, 
                  limit_mb=user_limit_mb,
-                 local_api=settings.local_api.enabled)
+                 compression_enabled=compression_enabled)
 
-        # Trigger compression ONLY if:
-        # 1. Local Bot API is NOT enabled AND file > user limit (usually 50MB)
-        # OR
-        # 2. File is somehow > 2GB (Telegram's absolute limit even for local API)
-        should_compress = False
-        if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
-            should_compress = True
-        elif settings.local_api.enabled and is_large_file:
-            should_compress = True
-
-        if should_compress:
+        # Trigger compression ONLY if enabled by user AND file > user limit
+        if compression_enabled and needs_compression(file_to_upload, max_bytes):
             # 8. If compression needed
             log.info("compression_triggered", path=str(file_to_upload))
             async with get_db() as session:
@@ -160,29 +149,60 @@ async def download_task(
             await notify_user(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="⚙️ <b>Compressing video...</b> (this may take a few minutes)",
+                text="⚙️ <b>Compressing video to HEVC...</b> (this may take a few minutes)",
             )
 
             # Cancel progress task as it's for downloading
             if progress_task:
                 progress_task.cancel()
 
-            file_to_upload = await compress_video(file_to_upload, settings.ffmpeg.target_mb)
+            file_to_upload = await compress_video(file_to_upload, user_limit_mb)
             log.info("compression_finished", new_path=str(file_to_upload), new_size=file_to_upload.stat().st_size)
 
-        # 9. Edit message: "📤 Uploading..."
+        # 9. CHECK FOR 2GB LIMIT AND SPLIT IF NEEDED
+        # Telegram Local API allows up to 2GB, but we split at 1900MB for safety
+        TELEGRAM_LIMIT_BYTES = 1900 * 1024 * 1024
+        files_to_upload = [file_to_upload]
+        
+        if file_to_upload.stat().st_size > TELEGRAM_LIMIT_BYTES:
+            log.info("splitting_large_file", size=file_to_upload.stat().st_size)
+            await notify_user(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="📦 <b>File is over 2GB. Splitting into 7z parts...</b>"
+            )
+            files_to_upload = await create_split_archive(file_to_upload, part_size_mb=1900)
+
+        # 10. upload_file() loop
         await notify_user(
-            chat_id=chat_id, message_id=message_id, text="📤 <b>Uploading to Telegram...</b>"
+            chat_id=chat_id, message_id=message_id, text=f"📤 <b>Uploading {len(files_to_upload)} file(s) to Telegram...</b>"
         )
 
-        file_id = await upload_file(
-            chat_id=chat_id,
-            file_path=file_to_upload,
-            caption=f"✅ <b>{download_result.filename}</b>",
-            as_video=as_video,
-            thumbnail=Path(download_result.thumbnail_url) if download_result.thumbnail_url and Path(download_result.thumbnail_url).exists() else None,
-            duration=download_result.duration,
-        )
+        last_file_id = None
+        for i, f_path in enumerate(files_to_upload):
+            if len(files_to_upload) > 1:
+                await notify_user(
+                    chat_id=chat_id, message_id=message_id, 
+                    text=f"📤 <b>Uploading part {i+1}/{len(files_to_upload)}...</b>"
+                )
+            
+            # Determine if this part should be uploaded as video
+            # Only the main file (if not split) should be video media if requested.
+            # 7z parts should always be documents.
+            is_part_video = as_video if len(files_to_upload) == 1 else False
+            
+            caption = f"✅ <b>{f_path.name}</b>"
+            if len(files_to_upload) > 1:
+                caption += f" (Part {i+1}/{len(files_to_upload)})"
+
+            last_file_id = await upload_file(
+                chat_id=chat_id,
+                file_path=f_path,
+                caption=caption,
+                as_video=is_part_video,
+                thumbnail=Path(download_result.thumbnail_url) if download_result.thumbnail_url and Path(download_result.thumbnail_url).exists() and i == 0 else None,
+                duration=download_result.duration if i == 0 else None,
+            )
 
         # 11. Success
         async with get_db() as session:
@@ -190,13 +210,13 @@ async def download_task(
                 session,
                 job_id,
                 JobStatus.DONE,
-                telegram_file_id=file_id,
+                telegram_file_id=last_file_id, # Store last part's file_id or main file_id
                 filename=download_result.filename,
                 size_bytes=download_result.size_bytes,
                 platform=download_result.platform,
             )
 
-        await notify_user(chat_id=chat_id, message_id=message_id, text="✅ <b>Download complete!</b>")
+        await notify_user(chat_id=chat_id, message_id=message_id, text="✅ <b>All parts uploaded successfully!</b>")
 
     except Exception as e:
         log.exception("download_task_failed", job_id=job_id_str, error=str(e))
