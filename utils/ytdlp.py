@@ -201,15 +201,13 @@ def build_ydl_opts(
         "check_formats": False,
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv", "web", "android", "mweb"],
+                "player_client": ["tv", "web", "web_creator", "mweb", "android"],
                 "player_skip": ["configs"],
                 "include_dash_manifest": True,
                 "include_hls_manifest": True,
             }
         },
         "format": "bestvideo+bestaudio/best",
-        "allow_unplayable_formats": True,
-        "ignore_no_formats_error": True,
     }
     
     if node_path:
