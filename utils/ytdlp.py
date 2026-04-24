@@ -63,7 +63,7 @@ class PreflightResult:
 
     def compute_url_hash(self) -> str:
         """Compute SHA256 of url + user_format_quality."""
-        content = f"{self.url}{self.user_format_quality}"
+        content = f"{self.url}:{self.user_format_quality}"
         return hashlib.sha256(content.encode()).hexdigest()
 
 
@@ -86,27 +86,30 @@ def get_format_selector(url: str, quality: str) -> str:
     if quality == "audio":
         return "bestaudio/best"
 
-    height = 720
-    try:
-        if quality != "best":
-            height = int(quality)
-    except ValueError:
-        pass
-
     url_lower = url.lower()
-    if "youtube.com" in url_lower or "youtu.be" in url_lower:
+    is_youtube = "youtube.com" in url_lower or "youtu.be" in url_lower
+
+    if is_youtube:
         if quality == "best":
             return "bestvideo+bestaudio/best"
-        # Try to get exact height, or closest below it
-        return f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}]/best"
+        
+        # Force strict height limit for YouTube
+        try:
+            h = int(quality)
+        except ValueError:
+            h = 720
+        
+        return f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/best[height<={h}][ext=mp4]/best[height<={h}]/best"
 
-    # For other platforms (TikTok, Reddit, Twitter), be MUCH more permissive.
-    # Often they only have one 'best' format, so [height<=...] can cause "format not found"
+    # For other platforms, be permissive
     if quality == "best":
         return "best"
     
-    # Try to respect height, but fallback to best if that fails
-    return f"best[height<={height}]/best"
+    try:
+        h = int(quality)
+        return f"best[height<={h}]/best"
+    except ValueError:
+        return "best"
 
 
 def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | None:
@@ -121,25 +124,19 @@ def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | 
     if quality == "audio":
         audio_formats = [f for f in formats if f.vcodec == "none" or f.vcodec is None]
         if not audio_formats:
-            return None
+            return sorted(formats, key=lambda f: f.filesize or 0, reverse=True)[0]
         return sorted(audio_formats, key=lambda f: f.filesize or 0, reverse=True)[0]
 
     if quality == "best":
         video_formats = [f for f in formats if f.vcodec != "none"]
         if not video_formats:
-            return None
+            return sorted(formats, key=lambda f: f.filesize or 0, reverse=True)[0]
         return sorted(video_formats, key=lambda f: f.filesize or 0, reverse=True)[0]
 
-    if quality not in quality_order:
-        return None
-
-    if quality == "best":
-        height = 4320  # Allow up to 4K/8K
-    else:
-        try:
-            height = int(quality)
-        except ValueError:
-            height = 720
+    try:
+        height = int(quality)
+    except ValueError:
+        height = 720
 
     candidates = []
     for f in formats:
@@ -166,6 +163,9 @@ def select_best_format(formats: list[FormatInfo], quality: str) -> FormatInfo | 
             reverse=True,
         )[0]
 
+    if formats:
+        return sorted(formats, key=lambda f: f.filesize or 0, reverse=True)[0]
+        
     return None
 
 
@@ -196,27 +196,25 @@ def build_ydl_opts(
     if node_path:
         log.debug("js_runtime_found", path=node_path)
 
-    # Multi-client strategy to bypass bot detection
-    clients = ["android", "web", "mweb"]
-    if cookie_file:
-        clients = ["web", "mweb"]
+    # Multi-client strategy
+    # ONLY USE COOKIES FOR YOUTUBE
+    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    actual_cookie_file = cookie_file if is_youtube else None
     
-    # Reddit special strategy
-    if "reddit.com" in url.lower() or "redd.it" in url.lower():
-        # Reddit often blocks VPS IPs. Use guest client or different player
+    clients = ["web", "mweb", "android"]
+    if actual_cookie_file:
         clients = ["web", "mweb"]
 
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
         "extract_flat": False,
-        "socket_timeout": 60, # Increased timeout
+        "socket_timeout": 60,
         "retries": 5,
-        "fragment_retries": 15, # Aggressive fragment retries for Reddit
-        "http_chunk_size": 10485760,  # 10MB
+        "fragment_retries": 15,
+        "http_chunk_size": 10485760,
         "proxy": proxy_url,
-        "cookiefile": cookie_file,
-        # MODERN BYPASS STRATEGY
+        "cookiefile": actual_cookie_file,
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "check_formats": False,
         "extractor_args": {
@@ -227,7 +225,6 @@ def build_ydl_opts(
         },
     }
     
-    # Python API expects a dict for js_runtimes if providing configuration
     if node_path:
         opts["js_runtimes"] = {"node": {"path": node_path}}
     
@@ -244,8 +241,6 @@ async def fetch_metadata(url: str, user_format_quality: str) -> PreflightResult:
     proxy = await proxy_pool.get_proxy_for_url(url)
     proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
-    if cookie_file:
-        log.debug("using_cookie_file", path=cookie_file, url=url)
 
     format_selector = get_format_selector(url, user_format_quality)
     opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, "metadata")
@@ -320,8 +315,6 @@ async def download_media(
     proxy = await proxy_pool.get_proxy_for_url(url)
     proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
-    if cookie_file:
-        log.debug("using_cookie_file", path=cookie_file, url=url)
 
     loop = asyncio.get_running_loop()
 
@@ -329,14 +322,27 @@ async def download_media(
         loop.call_soon_threadsafe(progress_callback, d)
 
     opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, job_id, wrapped_callback)
-    opts.update(
-        {
+    
+    # Audio-only handling
+    if format_selector == "bestaudio/best":
+        opts.update({
             "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
             "format": format_selector,
-            "merge_output_format": "mp4",
-            "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
-        }
-    )
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        })
+    else:
+        opts.update(
+            {
+                "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
+                "format": format_selector,
+                "merge_output_format": "mp4",
+                "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
+            }
+        )
 
     def _download() -> dict[str, Any]:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -374,9 +380,12 @@ async def download_media(
         file_path = Path(filename)
 
     if not file_path.exists():
-        mp4_path = file_path.with_suffix(".mp4")
-        if mp4_path.exists():
-            file_path = mp4_path
+        # Check common extensions
+        for ext in [".mp4", ".mp3", ".mkv"]:
+            p = file_path.with_suffix(ext)
+            if p.exists():
+                file_path = p
+                break
         else:
             files = list(output_dir.glob("*"))
             if files:

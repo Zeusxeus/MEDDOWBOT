@@ -29,11 +29,16 @@ def get_settings_text(settings: UserSettings) -> str:
     progress = "ON" if settings.show_progress else "OFF"
     up_type = "Video Media" if settings.upload_as_video else "Document"
     
+    # Handle 'p' suffix correctly
+    q_display = settings.format_quality
+    if q_display not in ["audio", "best"]:
+        q_display = f"{q_display}p"
+    
     return (
         "┌─────────────────────────────────────┐\n"
         "│ ⚙️ <b>Your Settings</b>                    │\n"
         "│                                     │\n"
-        f"│ 📊 Quality: <b>{settings.format_quality}p</b>                │\n"
+        f"│ 📊 Quality: <b>{q_display}</b>                │\n"
         f"│ 📤 Upload as: <b>{up_type}</b>            │\n"
         f"│ 🗜️ Auto-compress: <b>{compress}</b>               │\n"
         f"│ 📶 Progress updates: <b>{progress}</b>             │\n"
