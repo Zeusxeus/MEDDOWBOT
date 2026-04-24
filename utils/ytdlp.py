@@ -197,7 +197,6 @@ def build_ydl_opts(
         "proxy": proxy_url,
         "cookiefile": cookie_file,
         # MODERN BYPASS STRATEGY
-        "impersonate": "chrome",  # New feature in recent yt-dlp
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "check_formats": False,
         "extractor_args": {
@@ -208,6 +207,7 @@ def build_ydl_opts(
         },
     }
     
+    # Python API expects a dict for js_runtimes if providing configuration
     if node_path:
         opts["js_runtimes"] = {"node": {"path": node_path}}
     
