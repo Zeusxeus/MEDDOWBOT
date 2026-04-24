@@ -72,26 +72,31 @@ class CookieManager:
 
         # Check if expired
         if cookie_record.expires_at:
+            # Ensure expires_at is timezone-aware (it's stored as naive in DB but meant to be UTC)
+            expires_at = cookie_record.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+                
             now = datetime.datetime.now(datetime.timezone.utc)
-            if cookie_record.expires_at < now:
+            if expires_at < now:
                 log.warning(
                     "cookie_file_expired",
                     platform=platform,
-                    expires_at=cookie_record.expires_at,
+                    expires_at=expires_at,
                     path=str(file_path),
                 )
-                await self._notify_expiry(platform, "EXPIRED", cookie_record.expires_at)
-            elif (cookie_record.expires_at - now) < datetime.timedelta(days=7):
+                await self._notify_expiry(platform, "EXPIRED", expires_at)
+            elif (expires_at - now) < datetime.timedelta(days=7):
                 log.warning(
                     "cookie_expiring_soon",
                     platform=platform,
-                    expires_at=cookie_record.expires_at,
-                    days_left=(cookie_record.expires_at - now).days,
+                    expires_at=expires_at,
+                    days_left=(expires_at - now).days,
                 )
                 await self._notify_expiry(
                     platform,
-                    f"expiring in {(cookie_record.expires_at - now).days} days",
-                    cookie_record.expires_at,
+                    f"expiring in {(expires_at - now).days} days",
+                    expires_at,
                 )
 
         return str(file_path)

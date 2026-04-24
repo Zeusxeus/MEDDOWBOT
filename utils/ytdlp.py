@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import shutil
 import time
 import uuid
 from collections.abc import Callable
@@ -174,6 +176,9 @@ def build_ydl_opts(
             except Exception as e:
                 log.error("progress_callback_error", error=str(e), job_id=str(job_id))
 
+    # Find node path
+    node_path = shutil.which("node") or "/usr/bin/node"
+
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
@@ -191,7 +196,10 @@ def build_ydl_opts(
         ),
         "check_formats": False,
     }
-
+    
+    if node_path:
+        opts["js_runtimes"] = {"node": {"path": node_path}}
+    
     if progress_callback:
         opts["progress_hooks"] = [hook_fn]
 
@@ -205,6 +213,8 @@ async def fetch_metadata(url: str, user_format_quality: str) -> PreflightResult:
     proxy = await proxy_pool.get_proxy_for_url(url)
     proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
+    if cookie_file:
+        log.debug("using_cookie_file", path=cookie_file, url=url)
 
     format_selector = get_format_selector(url, user_format_quality)
     opts = build_ydl_opts(url, format_selector, proxy_url, cookie_file, "metadata")
@@ -279,6 +289,8 @@ async def download_media(
     proxy = await proxy_pool.get_proxy_for_url(url)
     proxy_url = proxy.ytdlp_url if proxy else None
     cookie_file = await cookie_manager.get_cookie_file(url)
+    if cookie_file:
+        log.debug("using_cookie_file", path=cookie_file, url=url)
 
     loop = asyncio.get_running_loop()
 
