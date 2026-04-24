@@ -135,7 +135,14 @@ async def preflight_task(
     filesize_bytes = best_format.filesize if best_format else None
     estimated_size_mb = filesize_bytes / (1024 * 1024) if filesize_bytes else 0
 
-    if estimated_size_mb > settings.ffmpeg.large_file_warn_mb:
+    # Determine if we should show warning
+    should_warn = False
+    if not settings.local_api.enabled and estimated_size_mb > settings.ffmpeg.large_file_warn_mb:
+        should_warn = True
+    elif settings.local_api.enabled and estimated_size_mb > 2000:
+        should_warn = True
+
+    if should_warn:
         confirm_key = f"confirm:{chat_id}:{message_id}"
         await redis.set(confirm_key, job_id_str, ex=300)
         kb = InlineKeyboardMarkup(inline_keyboard=[[

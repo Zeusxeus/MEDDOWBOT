@@ -126,9 +126,27 @@ async def download_task(
         max_bytes = user_limit_mb * 1024 * 1024
         file_to_upload = download_result.file_path
         
-        log.info("checking_compression", path=str(file_to_upload), size=file_to_upload.stat().st_size, limit_mb=user_limit_mb)
+        # Determine if we should bypass the 50MB limit
+        # Local Bot API allows up to 2GB (2000MB)
+        is_large_file = file_to_upload.stat().st_size > (2000 * 1024 * 1024)
+        
+        log.info("checking_compression", 
+                 path=str(file_to_upload), 
+                 size=file_to_upload.stat().st_size, 
+                 limit_mb=user_limit_mb,
+                 local_api=settings.local_api.enabled)
 
-        if needs_compression(file_to_upload, max_bytes):
+        # Trigger compression ONLY if:
+        # 1. Local Bot API is NOT enabled AND file > user limit (usually 50MB)
+        # OR
+        # 2. File is somehow > 2GB (Telegram's absolute limit even for local API)
+        should_compress = False
+        if not settings.local_api.enabled and needs_compression(file_to_upload, max_bytes):
+            should_compress = True
+        elif settings.local_api.enabled and is_large_file:
+            should_compress = True
+
+        if should_compress:
             # 8. If compression needed
             log.info("compression_triggered", path=str(file_to_upload))
             async with get_db() as session:

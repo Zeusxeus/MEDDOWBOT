@@ -52,6 +52,7 @@ async def upload_file(
                 thumbnail=thumb_file,
                 duration=duration,
                 supports_streaming=True,
+                request_timeout=3600,  # 1 hour for large files
             )
             result_obj = message.video
         else:
@@ -60,6 +61,7 @@ async def upload_file(
                 document=media_file,
                 caption=caption,
                 thumbnail=thumb_file,
+                request_timeout=3600,  # 1 hour for large files
             )
             result_obj = message.document
 
