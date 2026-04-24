@@ -21,6 +21,22 @@ from utils.proxy import proxy_pool
 log = structlog.get_logger(__name__)
 
 
+class YtDlpError(Exception):
+    """Base exception for yt-dlp operations."""
+
+
+class YtDlpExtractError(YtDlpError):
+    """Raised when metadata extraction fails."""
+
+
+class YtDlpDownloadError(YtDlpError):
+    """Raised when download fails."""
+
+
+class YtDlpAuthError(YtDlpError):
+    """Raised when authentication/cookies are required or expired."""
+
+
 @dataclass(frozen=True)
 class FormatInfo:
     """Simplified format information from yt-dlp."""
